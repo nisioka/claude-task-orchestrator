@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ClickUpTaskProvider } from "../clickup-provider.js";
 
 const LISTS = { work: "L-work", private: "L-private" };
@@ -751,6 +751,70 @@ describe("actor", () => {
 });
 
 // ─── Errors ─────────────────────────────────────────────────────────
+
+describe("rate limits", () => {
+  /**
+   * A fetch that answers 429 for the task listing a set number of times, then
+   * succeeds. Everything else the provider needs answers straight away.
+   */
+  function limitedTimes(times: number, headers: Record<string, string> = {}) {
+    let seen = 0;
+    return (async (url: string) => {
+      if (String(url).includes("/user")) {
+        return new Response(JSON.stringify({ user: AI }), { status: 200 });
+      }
+      if (seen++ < times) return new Response("{}", { status: 429, headers });
+      return new Response(JSON.stringify({ tasks: [], last_page: true }), { status: 200 });
+    }) as unknown as typeof fetch;
+  }
+
+  it("waits and retries rather than dropping the request", async () => {
+    // A 429 means "not yet", not "failed". Passing it to the caller silently
+    // skips that one piece of work — measured at six per backfill run.
+    vi.useFakeTimers();
+    try {
+      const p = new ClickUpTaskProvider("key", LISTS, limitedTimes(2, { "retry-after": "1" }));
+      const listing = p.list({ group: "work" });
+      await vi.advanceTimersByTimeAsync(3000);
+
+      await expect(listing).resolves.toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("honours retry-after rather than guessing", async () => {
+    vi.useFakeTimers();
+    try {
+      const p = new ClickUpTaskProvider("key", LISTS, limitedTimes(1, { "retry-after": "5" }));
+      const listing = p.list({ group: "work" });
+
+      await vi.advanceTimersByTimeAsync(4000);
+      let settled = false;
+      void listing.then(() => (settled = true));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(listing).resolves.toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up rather than retrying for ever", async () => {
+    vi.useFakeTimers();
+    try {
+      const p = new ClickUpTaskProvider("key", LISTS, limitedTimes(99, { "retry-after": "1" }));
+      const listing = p.list({ group: "work" });
+      const assertion = expect(listing).rejects.toThrow(/\(429\)/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("failures", () => {
   it("puts ClickUp's own message in the error", async () => {
