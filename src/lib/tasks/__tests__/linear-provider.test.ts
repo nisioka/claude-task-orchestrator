@@ -204,6 +204,13 @@ describe("getMany", () => {
 // ─── Custom fields ──────────────────────────────────────────────────
 
 describe("custom fields", () => {
+  it("says it cannot store them, so a caller can ask before sending", () => {
+    // Writing one is an error, deliberately, so a typo cannot be swallowed.
+    // That leaves callers needing to tell "nowhere to put this" from "wrong
+    // name", which is what the flag is for.
+    expect(makeProvider().supportsFields).toBe(false);
+  });
+
   it("refuses them rather than dropping them", async () => {
     // Linear has no per-issue custom fields. The caller wrote the value
     // expecting to find it later; a silent drop is discovered by whoever goes

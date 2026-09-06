@@ -153,6 +153,7 @@ function actorOf(user: RawUser): Actor {
 
 export class ClickUpTaskProvider implements TaskProvider {
   readonly name = "clickup";
+  readonly supportsFields = true;
 
   private readonly apiKey: string;
   private readonly lists: ClickUpLists;

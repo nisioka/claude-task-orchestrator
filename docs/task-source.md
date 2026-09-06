@@ -43,6 +43,9 @@ npx tsx src/cli/personal-field.ts --id=<ISSUE-ID> --name=worktree --value=/abs/p
 Linear にはイシュー単位のカスタム項目が無いので、`fields` を渡すと明示的に失敗する。
 本文かコメントへ書くこと。
 
+**どちらのソースでも動く必要があるコードは、`TaskProvider.supportsFields` を先に見る。**
+項目が無いことと名前を間違えたことは別の失敗で、後者は落ちてほしい。前者を知る手段が要る。
+
 ## ClickUp で気をつけること
 
 **名前は全部小文字で保存される。** `PJ:ABC` として作ったタグは `pj:abc` として返る。
