@@ -65,6 +65,17 @@ export interface Task {
   priority: TaskPriority | null;
   /** Present only when the filter asked for it. Descriptions dominate the payload. */
   description?: string;
+  /**
+   * Named values the backend stores alongside the task, keyed by the name a
+   * person sees on the board.
+   *
+   * For things that are one value and get looked up, not read: where the
+   * worktree is, what the task was mirrored from. A comment can hold the same
+   * text, but only a field can be seen without scrolling and filtered on.
+   *
+   * Absent, rather than empty, when the backend has no such concept.
+   */
+  fields?: Record<string, string>;
 }
 
 export interface TaskDetail extends Task {
@@ -111,12 +122,22 @@ export interface NewTask {
   status?: string;
   labels?: string[];
   assignee?: ActorRole | ActorId;
+  /**
+   * Named values to store alongside the task.
+   *
+   * A provider that has no such concept, or does not recognise a name, throws.
+   * Dropping them quietly would leave the caller believing a value was stored,
+   * and the absence only shows up when someone goes looking for it.
+   */
+  fields?: Record<string, string>;
 }
 
-/** Only the named fields change. Omitted ones are left alone. */
+/** Only the named properties change. Omitted ones are left alone. */
 export interface TaskPatch {
   title?: string;
   status?: string;
   assignee?: ActorRole | ActorId;
   addLabels?: string[];
+  /** Named values to store. Unknown names throw; see `NewTask.fields`. */
+  fields?: Record<string, string>;
 }

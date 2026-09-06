@@ -68,6 +68,13 @@ interface RawUser {
   timezone?: string | null;
 }
 
+interface RawCustomField {
+  id: string;
+  name: string;
+  type: string;
+  value?: unknown;
+}
+
 interface RawTask {
   id: string;
   name: string;
@@ -80,6 +87,7 @@ interface RawTask {
   date_updated: string | null;
   due_date: string | null;
   priority: { priority: string } | null;
+  custom_fields?: RawCustomField[];
   list?: { id: string };
 }
 
@@ -122,6 +130,23 @@ function priorityOf(raw: RawTask): TaskPriority | null {
   return name ? (PRIORITY_BY_NAME[name] ?? null) : null;
 }
 
+/**
+ * The custom fields that actually hold something, as name → text.
+ *
+ * ClickUp returns every field defined on the list, with `value` absent on the
+ * ones nobody filled in. Carrying those through as empty strings would make
+ * "not set" and "set to nothing" the same thing.
+ */
+function fieldsOf(raw: RawTask): Record<string, string> | null {
+  if (!raw.custom_fields) return null;
+  const out: Record<string, string> = {};
+  for (const field of raw.custom_fields) {
+    if (field.value === undefined || field.value === null || field.value === "") continue;
+    out[field.name] = typeof field.value === "string" ? field.value : JSON.stringify(field.value);
+  }
+  return out;
+}
+
 function actorOf(user: RawUser): Actor {
   return { id: String(user.id), name: user.username ?? String(user.id), email: user.email ?? undefined };
 }
@@ -134,6 +159,8 @@ export class ClickUpTaskProvider implements TaskProvider {
   private readonly fetchImpl: typeof fetch;
 
   private actorCache = new Map<ActorRole, Actor>();
+  /** Custom field name (lowercased) → id, per list. */
+  private fieldCache = new Map<string, Map<string, string>>();
   private meCache: RawUser | null = null;
   private spaceIdCache: string | null = null;
   private teamIdCache: string | null = null;
@@ -246,6 +273,53 @@ export class ClickUpTaskProvider implements TaskProvider {
     return resolved;
   }
 
+  /**
+   * The list's custom fields, by lowercased name.
+   *
+   * A ClickUp custom field is addressed by id, but a caller only knows the name
+   * it sees on the board, and the two lists share their fields anyway.
+   */
+  private async fieldIds(listId: string): Promise<Map<string, string>> {
+    const cached = this.fieldCache.get(listId);
+    if (cached) return cached;
+
+    const body = await this.request<{ fields: { id: string; name: string }[] }>(
+      "GET",
+      `/list/${listId}/field`,
+    );
+    const map = new Map(body.fields.map((f) => [f.name.toLowerCase(), f.id]));
+    this.fieldCache.set(listId, map);
+    return map;
+  }
+
+  /**
+   * Writes named values onto a task, one request each.
+   *
+   * An unknown name throws rather than being skipped. The caller believes the
+   * value was stored, and a quiet miss only surfaces when someone goes looking
+   * for it — which, for a worktree path, is when they need it most.
+   */
+  private async setFields(
+    taskId: TaskId,
+    listId: string,
+    fields: Record<string, string>,
+  ): Promise<void> {
+    const entries = Object.entries(fields);
+    if (entries.length === 0) return;
+
+    const ids = await this.fieldIds(listId);
+    for (const [name, value] of entries) {
+      const id = ids.get(name.toLowerCase());
+      if (!id) {
+        throw new Error(
+          `カスタム項目 "${name}" がリスト ${listId} にありません。` +
+            `ClickUp 側で作ってください（現在: ${[...ids.keys()].join(", ") || "なし"}）。`,
+        );
+      }
+      await this.request("POST", `/task/${taskId}/field/${id}`, { value });
+    }
+  }
+
   private async resolveAssignee(who: ActorRole | string): Promise<string> {
     return who === "ai" || who === "human" ? (await this.actor(who)).id : who;
   }
@@ -273,6 +347,9 @@ export class ClickUpTaskProvider implements TaskProvider {
     };
     const description = raw.markdown_description ?? raw.description;
     if (description !== undefined && description !== null) task.description = description;
+
+    const fields = fieldsOf(raw);
+    if (fields) task.fields = fields;
     return task;
   }
 
@@ -445,7 +522,9 @@ export class ClickUpTaskProvider implements TaskProvider {
     if (input.labels?.length) body.tags = input.labels;
     if (input.assignee) body.assignees = [Number(await this.resolveAssignee(input.assignee))];
 
-    const created = await this.request<RawTask>("POST", `/list/${this.lists[input.group]}/task`, body);
+    const listId = this.lists[input.group];
+    const created = await this.request<RawTask>("POST", `/list/${listId}/task`, body);
+    if (input.fields) await this.setFields(created.id, listId, input.fields);
 
     // 作った直後に読み直す。ステータスやタグの実際の値は、こちらの指定ではなく
     // ワークスペースの側で決まる（ClickUp は名前を小文字にする）。
@@ -474,6 +553,12 @@ export class ClickUpTaskProvider implements TaskProvider {
     for (const name of patch.addLabels ?? []) {
       await this.ensureLabel(name);
       await this.request("POST", `/task/${id}/tag/${encodeURIComponent(name)}`);
+    }
+
+    if (patch.fields) {
+      // フィールドの id はリスト単位なので、そのタスクがどちらに居るかを見る
+      const task = await this.request<RawTask>("GET", `/task/${id}`);
+      await this.setFields(id, task.list?.id ?? this.lists.work, patch.fields);
     }
   }
 
