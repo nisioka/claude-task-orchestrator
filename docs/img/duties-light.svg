@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 392" width="840" height="392" role="img" aria-label="AI が自分でループを回し、4つの責務のときだけ人間へ渡す図">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0l10 5-10 5z" fill="#9A6314"/>
+    </marker>
+    <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0l10 5-10 5z" fill="#16695D"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+    .m { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+
+  <circle cx="222" cy="192" r="148" fill="none" stroke="#16695D" stroke-width="2"/>
+  <text x="222" y="84" text-anchor="middle" font-size="15" font-weight="700" fill="#16695D">AI の責務</text>
+  <text x="222" y="126" text-anchor="middle" font-size="13" fill="#101720">
+    <tspan x="222">実装</tspan>
+    <tspan x="222" dy="1.6em">トリアージと要件起案</tspan>
+    <tspan x="222" dy="1.6em">ステータス遷移</tspan>
+    <tspan x="222" dy="1.6em">進捗把握</tspan>
+    <tspan x="222" dy="1.6em">失敗の診断と再試行</tspan>
+    <tspan x="222" dy="1.6em">レビュー指摘への対応</tspan>
+  </text>
+  <text x="222" y="312" text-anchor="middle" font-size="11" fill="#7A8590" class="m">10-30 min ごとに巡回</text>
+
+  <path d="M374 126h116" fill="none" stroke="#9A6314" stroke-width="1.6" marker-end="url(#ah)"/>
+  <path d="M374 168h116" fill="none" stroke="#9A6314" stroke-width="1.6" marker-end="url(#ah)"/>
+  <path d="M374 210h116" fill="none" stroke="#9A6314" stroke-width="1.6" marker-end="url(#ah)"/>
+  <path d="M374 252h116" fill="none" stroke="#9A6314" stroke-width="1.6" marker-end="url(#ah)"/>
+  <text x="432" y="118" text-anchor="middle" font-size="10" fill="#9A6314" class="m">a</text>
+  <text x="432" y="160" text-anchor="middle" font-size="10" fill="#9A6314" class="m">b</text>
+  <text x="432" y="202" text-anchor="middle" font-size="10" fill="#9A6314" class="m">c</text>
+  <text x="432" y="244" text-anchor="middle" font-size="10" fill="#9A6314" class="m">d</text>
+
+  <rect x="498" y="92" width="330" height="200" rx="3" fill="#FFFFFF" stroke="#9A6314" stroke-width="2"/>
+  <text x="663" y="122" text-anchor="middle" font-size="15" font-weight="700" fill="#9A6314">人間の責務（4つだけ）</text>
+  <text x="522" y="156" font-size="12.5" fill="#101720">
+    <tspan x="522">a　要件・設計の確認</tspan>
+    <tspan x="522" dy="1.8em">b　実際に動くアプリを触ってのテスト</tspan>
+    <tspan x="522" dy="1.8em">c　コードレビューとマージの実行</tspan>
+    <tspan x="522" dy="1.8em">d　他の人間とのコミュニケーション</tspan>
+  </text>
+  <text x="663" y="274" text-anchor="middle" font-size="11" fill="#7A8590">催促はしない。聞かれたら全部出す</text>
+
+  <path d="M663 296v44H222v-4" fill="none" stroke="#16695D" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#aa)"/>
+  <text x="443" y="360" text-anchor="middle" font-size="11.5" fill="#16695D">担当者が戻れば、そこから AI が続ける</text>
+</svg>
