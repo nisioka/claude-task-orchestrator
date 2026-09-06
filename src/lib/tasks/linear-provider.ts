@@ -291,7 +291,23 @@ export class LinearTaskProvider implements TaskProvider {
     });
   }
 
+  /**
+   * Linear has no per-issue custom fields, so there is nowhere to put these.
+   *
+   * Throwing rather than ignoring: the caller wrote the value expecting it to
+   * be findable later, and a silent drop is only discovered by whoever goes
+   * looking for it.
+   */
+  private rejectFields(fields: Record<string, string> | undefined): void {
+    if (!fields || Object.keys(fields).length === 0) return;
+    throw new Error(
+      `Linear にはカスタム項目がありません: ${Object.keys(fields).join(", ")}。` +
+        `本文かコメントへ書いてください。`,
+    );
+  }
+
   async create(input: NewTask): Promise<Task> {
+    this.rejectFields(input.fields);
     const teamId = await fetchPersonalTeamId(this.client);
     const labelIds: string[] = [];
     for (const name of [...(input.labels ?? []), GROUP_LABELS[input.group]]) {
@@ -321,6 +337,7 @@ export class LinearTaskProvider implements TaskProvider {
   }
 
   async update(id: TaskId, patch: TaskPatch): Promise<void> {
+    this.rejectFields(patch.fields);
     const issue = await this.client.issue(id);
     if (!issue) throw new Error(`タスクが見つかりません: ${id}`);
 

@@ -200,3 +200,29 @@ describe("getMany", () => {
     expect(t.comments).toEqual([]);
   });
 });
+
+// ─── Custom fields ──────────────────────────────────────────────────
+
+describe("custom fields", () => {
+  it("refuses them rather than dropping them", async () => {
+    // Linear has no per-issue custom fields. The caller wrote the value
+    // expecting to find it later; a silent drop is discovered by whoever goes
+    // looking for it, which is the worst moment.
+    await expect(
+      makeProvider().create({ title: "件名", group: "work", fields: { worktree: "/a" } }),
+    ).rejects.toThrow(/カスタム項目がありません/);
+  });
+
+  it("names the fields it refused", async () => {
+    await expect(
+      makeProvider().update("TASK-1", { fields: { worktree: "/a" } }),
+    ).rejects.toThrow(/worktree/);
+  });
+
+  it("lets an empty set through", async () => {
+    // An empty object is not a request to store anything.
+    await expect(makeProvider().update("TASK-1", { fields: {} })).rejects.not.toThrow(
+      /カスタム項目/,
+    );
+  });
+});

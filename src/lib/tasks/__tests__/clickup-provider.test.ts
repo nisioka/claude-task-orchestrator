@@ -30,6 +30,12 @@ class FakeClickUp {
     });
     this.on("GET", /^\/list\/L-work$/, { space: { id: "S1" } });
     this.on("GET", /^\/space\/S1\/tag$/, { tags: [] });
+    this.on("GET", /^\/list\/L-(work|private)\/field$/, {
+      fields: [
+        { id: "F-worktree", name: "worktree", type: "text" },
+        { id: "F-origin", name: "Origin URL", type: "url" },
+      ],
+    });
   }
 
   on(method: string, path: RegExp, response: unknown): this {
@@ -438,6 +444,101 @@ describe("getMany", () => {
 });
 
 // ─── Writing ────────────────────────────────────────────────────────
+
+describe("custom fields", () => {
+  it("reads the ones that hold something", async () => {
+    tasksOn(fake, "L-work", [
+      rawTask({
+        custom_fields: [
+          { id: "F-worktree", name: "worktree", type: "text", value: "/abs/wt" },
+          { id: "F-origin", name: "Origin URL", type: "url" },
+        ],
+      }),
+    ]);
+    tasksOn(fake, "L-private", []);
+
+    expect((await provider.list())[0].fields).toEqual({ worktree: "/abs/wt" });
+  });
+
+  it("leaves an unfilled field out rather than reporting an empty value", async () => {
+    // "not set" and "set to nothing" are different answers.
+    tasksOn(fake, "L-work", [
+      rawTask({ custom_fields: [{ id: "F-worktree", name: "worktree", type: "text" }] }),
+    ]);
+    tasksOn(fake, "L-private", []);
+
+    expect((await provider.list())[0].fields).toEqual({});
+  });
+
+  it("says nothing about fields when the response carries none", async () => {
+    tasksOn(fake, "L-work", [rawTask()]);
+    tasksOn(fake, "L-private", []);
+
+    expect((await provider.list())[0].fields).toBeUndefined();
+  });
+
+  it("writes a value by resolving the name to the list's field id", async () => {
+    fake.on("GET", /^\/task\/z8tj1h26um$/, rawTask({ list: { id: "L-work" } }));
+    fake.on("POST", /^\/task\/z8tj1h26um\/field\/F-worktree$/, {});
+
+    await provider.update("z8tj1h26um", { fields: { worktree: "/abs/wt" } });
+
+    const post = fake.calls.find((c) => c.method === "POST")!;
+    expect(post.url).toBe("/task/z8tj1h26um/field/F-worktree");
+    expect(post.body).toEqual({ value: "/abs/wt" });
+  });
+
+  it("matches the field name ignoring case", async () => {
+    fake.on("GET", /^\/task\/z8tj1h26um$/, rawTask({ list: { id: "L-work" } }));
+    fake.on("POST", /^\/task\/z8tj1h26um\/field\/F-origin$/, {});
+
+    await provider.update("z8tj1h26um", { fields: { "origin url": "https://example.com/x" } });
+
+    expect(fake.calls.some((c) => c.url === "/task/z8tj1h26um/field/F-origin")).toBe(true);
+  });
+
+  it("throws on a name the list does not have, rather than skipping it", async () => {
+    // The caller believes the value was stored. A quiet miss only surfaces when
+    // someone goes looking for it.
+    fake.on("GET", /^\/task\/z8tj1h26um$/, rawTask({ list: { id: "L-work" } }));
+
+    await expect(
+      provider.update("z8tj1h26um", { fields: { nosuch: "x" } }),
+    ).rejects.toThrow(/カスタム項目 "nosuch" がリスト/);
+  });
+
+  it("names what the list does have, so the message is actionable", async () => {
+    fake.on("GET", /^\/task\/z8tj1h26um$/, rawTask({ list: { id: "L-work" } }));
+
+    await expect(provider.update("z8tj1h26um", { fields: { nosuch: "x" } })).rejects.toThrow(
+      /worktree/,
+    );
+  });
+
+  it("sets them on creation too", async () => {
+    fake.on("POST", /^\/list\/L-work\/task$/, rawTask());
+    fake.on("GET", /^\/task\/z8tj1h26um$/, rawTask());
+    fake.on("POST", /^\/task\/z8tj1h26um\/field\/F-origin$/, {});
+
+    await provider.create({
+      title: "件名",
+      group: "work",
+      fields: { "Origin URL": "https://example.com/ABC-1" },
+    });
+
+    expect(fake.calls.some((c) => c.url === "/task/z8tj1h26um/field/F-origin")).toBe(true);
+  });
+
+  it("asks the list for its fields only once", async () => {
+    fake.on("GET", /^\/task\/z8tj1h26um$/, rawTask({ list: { id: "L-work" } }));
+    fake.on("POST", /^\/task\/z8tj1h26um\/field\/F-worktree$/, {});
+
+    await provider.update("z8tj1h26um", { fields: { worktree: "/a" } });
+    await provider.update("z8tj1h26um", { fields: { worktree: "/b" } });
+
+    expect(fake.calls.filter((c) => c.url === "/list/L-work/field")).toHaveLength(1);
+  });
+});
 
 describe("create", () => {
   beforeEach(() => {
