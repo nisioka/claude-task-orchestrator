@@ -583,6 +583,8 @@ export class ClickUpTaskProvider implements TaskProvider {
   async update(id: TaskId, patch: TaskPatch): Promise<void> {
     const body: Record<string, unknown> = {};
     if (patch.title !== undefined) body.name = patch.title;
+    // 素の `description` は平文への射影なので、書くのは markdown のほう
+    if (patch.description !== undefined) body.markdown_description = patch.description;
     if (patch.status !== undefined) body.status = patch.status;
     if (patch.assignee !== undefined) {
       const current = await this.request<RawTask>("GET", `/task/${id}`);

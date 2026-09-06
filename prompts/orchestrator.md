@@ -374,6 +374,28 @@ npx tsx {{coreDir}}/src/cli/personal-field.ts --id=<ISSUE-ID> --name=worktree --
 
 タスクソースにこの項目が無いときは、CLI が項目名を挙げて失敗します。作れば通ります。
 
+**worktree を作ったら、その絶対パスをイシュー本文の先頭ブロックに入れてください。**
+
+```bash
+npx tsx {{coreDir}}/src/cli/personal-field.ts --id=<ISSUE-ID> --name=worktree --value=<絶対パス>
+```
+
+本文の先頭がこうなります。
+
+```
+orchestrator:begin
+worktree: /絶対パス
+orchestrator:end
+```
+
+**入れるのはいま使っている場所だけ**です。作り直したら上書きし、worktree を畳んだら
+`--value=` を空で渡して消してください。無い場所を指したままにすると、人間をそこへ送ってしまいます。
+経緯はコメントに残るので、ブロックのほうは「今どこにあるか」に徹します。
+
+**イシュー本文に HTML コメントとマークダウンのリンクを書かないでください。** ClickUp は保存の
+たびに本文を書き直します。HTML コメントと URL が同じ本文にあると、書くたびにエスケープと
+自動リンクが入れ子で増え、3回ほどで読めなくなります（実測）。URLはそのまま貼ってください。
+
 リポジトリ設定は `~/.config/ai-orchestrator/repositories.json` にあります。
 
 | 項目 | 意味 |

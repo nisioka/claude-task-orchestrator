@@ -559,6 +559,17 @@ describe("create", () => {
     );
   });
 
+  it("sends an updated description as markdown", async () => {
+    fake.on("PUT", /^\/task\/z8tj1h26um$/, {});
+    fake.on("GET", /^\/task\/z8tj1h26um$/, rawTask());
+
+    await provider.update("z8tj1h26um", { description: "新しい本文" });
+
+    expect(fake.calls.find((c) => c.method === "PUT")!.body).toEqual({
+      markdown_description: "新しい本文",
+    });
+  });
+
   it("sends the description as markdown", async () => {
     // The plain field would strip the markers the jobs read back out.
     await provider.create({ title: "件名", group: "work", description: "<!-- id: 1 -->\n\n本文" });
