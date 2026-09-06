@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="AI が主体でタスクを回し、人間にしかできない4つの責務にだけ委譲する開発ループの設計解説。">
+<title>人間を呼ぶ4つの理由</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --bg:      #F5F7F9;
+    --surface: #FFFFFF;
+    --sunken:  #ECEFF3;
+    --ink:     #101720;
+    --ink-2:   #56616D;
+    --ink-3:   #8C97A2;
+    --line:    #D9DFE6;
+    --line-2:  #C2CBD4;
+    --ai:      #16695D;
+    --human:   #9A6314;
+    --alert:   #9E3A28;
+    --shadow:  0 1px 2px rgba(16, 23, 32, .04), 0 12px 28px -22px rgba(16, 23, 32, .5);
+
+    --s0: clamp(.98rem, .94rem + .18vw, 1.05rem);
+    --s1: clamp(1.12rem, 1.04rem + .4vw, 1.3rem);
+    --s2: clamp(1.4rem, 1.2rem + .9vw, 1.85rem);
+    --s3: clamp(1.9rem, 1.4rem + 2.4vw, 3.1rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:      #0E1318;
+      --surface: #151C23;
+      --sunken:  #101720;
+      --ink:     #E7EBEF;
+      --ink-2:   #A3AEB8;
+      --ink-3:   #74808B;
+      --line:    #26313A;
+      --line-2:  #35424D;
+      --ai:      #55B7A4;
+      --human:   #D9A855;
+      --alert:   #DE8571;
+      --shadow:  0 1px 2px rgba(0,0,0,.5), 0 14px 30px -24px rgba(0,0,0,1);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:      #0E1318;
+    --surface: #151C23;
+    --sunken:  #101720;
+    --ink:     #E7EBEF;
+    --ink-2:   #A3AEB8;
+    --ink-3:   #74808B;
+    --line:    #26313A;
+    --line-2:  #35424D;
+    --ai:      #55B7A4;
+    --human:   #D9A855;
+    --alert:   #DE8571;
+    --shadow:  0 1px 2px rgba(0,0,0,.5), 0 14px 30px -24px rgba(0,0,0,1);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans JP", system-ui, "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    font-size: var(--s0);
+    line-height: 1.9;
+    word-break: keep-all;
+    line-break: strict;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 58rem;
+    margin: 0 auto;
+    padding: clamp(2.2rem, 1rem + 4vw, 4.5rem) clamp(1.1rem, .5rem + 3vw, 2.5rem) 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(3rem, 2rem + 4vw, 5rem);
+  }
+
+  h1, h2, h3 { margin: 0; font-weight: 700; text-wrap: balance; line-height: 1.45; letter-spacing: -.01em; }
+  p { margin: 0; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .74rem;
+    letter-spacing: .16em;
+    color: var(--ink-3);
+    text-transform: uppercase;
+  }
+
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { font-size: .88em; background: var(--sunken); padding: .1em .35em; border-radius: 2px; }
+  strong { font-weight: 600; }
+
+  .hero { display: flex; flex-direction: column; gap: 1.1rem; }
+  .hero h1 { font-size: var(--s3); }
+  .hero .lede { font-size: var(--s1); color: var(--ink-2); max-width: 41ch; line-height: 1.85; }
+  .ai { color: var(--ai); }
+
+  section { display: flex; flex-direction: column; gap: 1.3rem; }
+  section > h2 { font-size: var(--s2); }
+  section > .intro { color: var(--ink-2); max-width: 47ch; }
+
+  figure { margin: 0; }
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: clamp(1rem, .5rem + 2vw, 1.8rem);
+    overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .diagram svg { display: block; width: 100%; min-width: 32rem; height: auto; }
+  .diagram figcaption { margin-top: 1rem; font-size: .88rem; color: var(--ink-2); }
+
+  /* 人間の責務 */
+  .duties { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 2px; grid-template-columns: 1fr; }
+  @media (min-width: 42rem) { .duties { grid-template-columns: 1fr 1fr; } }
+  .duties div { background: var(--surface); padding: 1.1rem 1.2rem; display: grid; grid-template-columns: 1.9rem 1fr; gap: 0 .7rem; }
+  .duties .k { font-family: "IBM Plex Mono", monospace; font-weight: 600; color: var(--human); font-size: .95rem; padding-top: .05rem; }
+  .duties b { font-weight: 600; display: block; }
+  .duties span { font-size: .88rem; color: var(--ink-2); }
+
+  .rest {
+    border-left: 3px solid var(--ai);
+    padding: .3rem 0 .3rem 1.1rem;
+    max-width: 50ch;
+  }
+  .rest b { color: var(--ai); }
+
+  /* 待ち時間 */
+  .contrast { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 2px; grid-template-columns: 1fr; }
+  @media (min-width: 42rem) { .contrast { grid-template-columns: 1fr 1fr; } }
+  .contrast div { background: var(--surface); padding: 1.2rem 1.3rem; display: flex; flex-direction: column; gap: .4rem; }
+  .contrast .lbl { font-family: "IBM Plex Mono", monospace; font-size: .72rem; letter-spacing: .12em; }
+  .contrast .yes .lbl { color: var(--ai); }
+  .contrast .no .lbl { color: var(--ink-3); }
+  .contrast p { font-size: .93rem; color: var(--ink-2); }
+  .contrast .no b { color: var(--ink-3); font-weight: 600; }
+  .contrast .yes b { color: var(--ink); font-weight: 600; }
+
+  /* 委譲 */
+  .handoff { display: grid; gap: 0; grid-template-columns: 1fr; border-top: 1px solid var(--line); }
+  .handoff div { display: grid; grid-template-columns: 8.5rem 1fr; gap: 0 1rem; padding: .8rem .1rem; border-bottom: 1px solid var(--line); align-items: baseline; }
+  @media (max-width: 34rem) { .handoff div { grid-template-columns: 1fr; gap: .2rem; } }
+  .handoff .st { font-family: "IBM Plex Mono", monospace; font-size: .86rem; color: var(--human); font-weight: 600; }
+  .handoff span { color: var(--ink-2); font-size: .93rem; }
+
+  .decisions { display: flex; flex-direction: column; gap: 2.2rem; }
+  .decision { display: flex; flex-direction: column; gap: .75rem; }
+  .decision h3 { font-size: var(--s1); }
+  .decision p { color: var(--ink-2); max-width: 52ch; }
+  .incident {
+    border-left: 2px solid var(--alert);
+    padding: .1rem 0 .1rem 1rem;
+    font-size: .92rem;
+    color: var(--ink-2);
+    max-width: 52ch;
+  }
+  .incident .tag { font-family: "IBM Plex Mono", monospace; font-size: .72rem; letter-spacing: .12em; color: var(--alert); display: block; }
+
+  .metrics { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 2px; grid-template-columns: 1fr 1fr; }
+  @media (min-width: 46rem) { .metrics { grid-template-columns: repeat(4, 1fr); } }
+  .metrics div { background: var(--surface); padding: 1.1rem; display: flex; flex-direction: column; gap: .15rem; }
+  .metrics b { font-family: "IBM Plex Mono", monospace; font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .metrics span { font-size: .8rem; color: var(--ink-2); line-height: 1.6; }
+
+  .quote {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--ai);
+    border-radius: 2px;
+    padding: clamp(1.1rem, .6rem + 2vw, 1.6rem);
+    display: flex;
+    flex-direction: column;
+    gap: .8rem;
+  }
+  .quote .path { font-family: "IBM Plex Mono", monospace; font-size: .76rem; color: var(--ink-3); }
+  .quote blockquote { margin: 0; line-height: 1.95; }
+
+  .slots { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 2px; grid-template-columns: 1fr; }
+  @media (min-width: 44rem) { .slots { grid-template-columns: 1fr 1fr; } }
+  .slots div { background: var(--surface); padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: .25rem; }
+  .slots code { background: none; padding: 0; color: var(--ai); font-size: .88rem; font-weight: 600; }
+  .slots span { font-size: .88rem; color: var(--ink-2); }
+
+  pre {
+    margin: 0;
+    background: var(--sunken);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .84rem;
+    line-height: 1.9;
+    color: var(--ink);
+  }
+  pre .c { color: var(--ink-3); }
+
+  .closing { border-top: 2px solid var(--ink); padding-top: 1.5rem; display: flex; flex-direction: column; gap: .9rem; }
+  .closing p { font-size: var(--s1); max-width: 43ch; line-height: 1.8; }
+  .closing small { color: var(--ink-3); font-size: .84rem; }
+  :focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">claude-task-orchestrator</div>
+    <h1><span class="ai">AI が主体</span>で回し、<wbr>人間は4つの用事にだけ呼ばれる</h1>
+    <p class="lede">実装もトリアージも進行管理も AI の責務です。<wbr>人間に頼まれるのを待つ立場ではありません。<wbr>人間にしかできない4つに来たときだけ、<wbr>担当者を渡して止まります。</p>
+  </header>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 820 400" role="img" aria-label="AI が自分でループを回し、4つの責務のときだけ人間へ渡す構成図">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0l10 5-10 5z" fill="var(--human)"/>
+        </marker>
+        <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0l10 5-10 5z" fill="var(--ai)"/>
+        </marker>
+      </defs>
+
+      <!-- AI の輪 -->
+      <circle cx="228" cy="196" r="150" fill="none" stroke="var(--ai)" stroke-width="2"/>
+      <text x="228" y="86" text-anchor="middle" font-size="15" font-weight="700" fill="var(--ai)">AI の責務</text>
+      <text x="228" y="132" text-anchor="middle" font-size="13" fill="var(--ink)">
+        <tspan x="228">実装</tspan>
+        <tspan x="228" dy="1.55em">トリアージと要件起案</tspan>
+        <tspan x="228" dy="1.55em">ステータス遷移</tspan>
+        <tspan x="228" dy="1.55em">進捗把握</tspan>
+        <tspan x="228" dy="1.55em">失敗の診断と再試行</tspan>
+        <tspan x="228" dy="1.55em">レビュー指摘への対応</tspan>
+      </text>
+      <text x="228" y="316" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="IBM Plex Mono, monospace">10-30 min ごとに巡回</text>
+
+      <!-- 委譲の矢印 -->
+      <path d="M382 130h118" fill="none" stroke="var(--human)" stroke-width="1.6" marker-end="url(#ah)"/>
+      <path d="M382 172h118" fill="none" stroke="var(--human)" stroke-width="1.6" marker-end="url(#ah)"/>
+      <path d="M382 214h118" fill="none" stroke="var(--human)" stroke-width="1.6" marker-end="url(#ah)"/>
+      <path d="M382 256h118" fill="none" stroke="var(--human)" stroke-width="1.6" marker-end="url(#ah)"/>
+      <text x="441" y="122" text-anchor="middle" font-size="10" fill="var(--human)" font-family="IBM Plex Mono, monospace">a</text>
+      <text x="441" y="164" text-anchor="middle" font-size="10" fill="var(--human)" font-family="IBM Plex Mono, monospace">b</text>
+      <text x="441" y="206" text-anchor="middle" font-size="10" fill="var(--human)" font-family="IBM Plex Mono, monospace">c</text>
+      <text x="441" y="248" text-anchor="middle" font-size="10" fill="var(--human)" font-family="IBM Plex Mono, monospace">d</text>
+
+      <!-- 人間 -->
+      <rect x="508" y="96" width="298" height="200" rx="2" fill="var(--surface)" stroke="var(--human)" stroke-width="2"/>
+      <text x="657" y="126" text-anchor="middle" font-size="15" font-weight="700" fill="var(--human)">人間の責務（4つだけ）</text>
+      <text x="530" y="160" font-size="12" fill="var(--ink)">
+        <tspan x="530">a  要件・設計の確認</tspan>
+        <tspan x="530" dy="1.75em">b  実機を触ってのテスト</tspan>
+        <tspan x="530" dy="1.75em">c  レビューとマージの実行</tspan>
+        <tspan x="530" dy="1.75em">d  他の人間との連絡</tspan>
+      </text>
+      <text x="657" y="278" text-anchor="middle" font-size="11" fill="var(--ink-3)">催促はしない。聞かれたら全部出す</text>
+
+      <!-- 戻り -->
+      <path d="M657 300v46H228v-6" fill="none" stroke="var(--ai)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#aa)"/>
+      <text x="443" y="368" text-anchor="middle" font-size="11" fill="var(--ai)">担当者が戻れば、そこから AI が続ける</text>
+    </svg>
+    <figcaption>渡し方は<strong>担当者の変更だけ</strong>です。<wbr>ステータスはどこまで進んだかの記録なので、<wbr>動かしません。</figcaption>
+  </figure>
+
+  <!-- ── 責務 ───────────────────────────── -->
+  <section>
+    <div class="eyebrow">Division of labour</div>
+    <h2>人間が担うのは、<wbr>この4種だけ</h2>
+    <div class="duties">
+      <div><span class="k">(a)</span><span><b>要件・設計の確認</b><span>仕様が足りないときは、AI が要件と設計案を起案してから渡す</span></span></div>
+      <div><span class="k">(b)</span><span><b>実機テストとフィードバック</b><span>実際に動くアプリを触る。AI は画面を見たとは言わない</span></span></div>
+      <div><span class="k">(c)</span><span><b>コードレビューとマージ</b><span>AI は PR を作るところまで。ボタンは押さない</span></span></div>
+      <div><span class="k">(d)</span><span><b>他の人間とのコミュニケーション</b><span>AI の発言が人間の発言として受け取られる状況を作らない</span></span></div>
+    </div>
+    <p class="rest"><b>それ以外は全て AI の責務です。</b><wbr>実装、トリアージ、ステータス遷移、進捗把握、失敗の診断、レビュー指摘への対応。<wbr>「これをやっておいて」と頼まれるのを待つ立場ではありません。</p>
+  </section>
+
+  <!-- ── 最適化対象 ─────────────────────── -->
+  <section>
+    <div class="eyebrow">Objective</div>
+    <h2>最適化するのは<wbr>人間の待ち時間であって、<wbr>AI の処理量ではない</h2>
+    <p class="intro">この2つはしばしば逆を向きます。<wbr>人間はボトルネックになる前提で組んであります。</p>
+    <div class="contrast">
+      <div class="no">
+        <span class="lbl">やらない</span>
+        <b>処理量を最大にする</b>
+        <p>人間の確認待ちが3件たまっているときに新しい実装を4件走らせても、<wbr>系全体は速くなりません。<wbr>人間が確認しなければならない量が増えるだけです。</p>
+      </div>
+      <div class="yes">
+        <span class="lbl">やる</span>
+        <b>渡す量を減らし、早く返す</b>
+        <p>人間に渡すものを減らし、<wbr>渡したものが早く返ってくる状態を保ちます。<wbr>そのほうが効きます。</p>
+      </div>
+    </div>
+    <p class="intro"><strong>催促はしません。</strong><wbr>代わりに、<wbr>人間が「今どうなってる？」と聞いたときに<wbr>即座に網羅的に答えられることで埋め合わせます。<wbr>押し込むのではなく、<wbr>聞かれたら全部出せる状態を保ちます。</p>
+  </section>
+
+  <!-- ── 委譲の仕組み ───────────────────── -->
+  <section>
+    <div class="eyebrow">Handoff</div>
+    <h2>渡すのは担当者だけ。<wbr>ステータスは動かさない</h2>
+    <p class="intro">所有権は担当者だけで決まります。<wbr>担当者が AI なら、<wbr>ステータスが何であっても AI の仕事です。<wbr>だから人間も、<wbr>ステータスを動かさずに担当者だけを変えて仕事を戻します。</p>
+
+    <div class="handoff">
+      <div><span class="st">Question</span><span>要件確認を待っている（責務 a）</span></div>
+      <div><span class="st">Test</span><span>実機テストを待っている（責務 b）</span></div>
+      <div><span class="st">In Review</span><span>レビューとマージを待っている（責務 c）</span></div>
+      <div><span class="st">Wait</span><span>AI が詰まって介入を待っている、または外部要因待ち</span></div>
+    </div>
+    <p class="intro">状態表示は<strong>件数ではなく責務別</strong>に答えます。<wbr>「3件あります」ではなく「要件確認が2件、レビューが1件、実機テストが3件」の形です。</p>
+
+    <div class="decisions">
+
+      <article class="decision">
+        <h3>ステータスは進捗の記録なので、<wbr>巻き戻さない</h3>
+        <p>PR 作成で落ちても実装フェーズは終わっています。<wbr><code>Todo</code> へ戻すと、<wbr>その情報が消えます。<wbr>渡すときは<strong>理由を先にコメントしてから</strong>担当者を変えます。<wbr>担当者の変更が人間に届く合図なので、<wbr>開いた時点で理由が載っている必要があります。</p>
+        <div class="incident">
+          <span class="tag">何が起きたか</span>
+          失敗経路がステータスを <code>Wait</code> へ動かしていました。<wbr>担当者は AI のままなので、<wbr>AI にはもう手がないのに AI のボールに残り、<wbr>人間へ渡ったことが誰にも分かりませんでした。
+        </div>
+      </article>
+
+      <article class="decision">
+        <h3>「このステータスを AI が持つはずがない」と<wbr>判断させない</h3>
+        <p>除外するのは <code>Backlog</code> と終了系だけで、<wbr>それは許可リストではなく<strong>除外リスト</strong>です。<wbr>許可リストは書き漏らすと<strong>隠れます</strong>。<wbr>除外リストは書き漏らしても<strong>一覧に残る</strong>だけです。</p>
+        <div class="incident">
+          <span class="tag">何が起きたか</span>
+          「AI が持ってよいステータス」の許可リストで絞っていたため、<wbr><code>Test</code> ＋担当者 = AI のイシューが状態表示から消えました。<wbr>AI はコメントの指示を読めないまま、<wbr>「存在しない状態」と解釈して人間へ差し戻し続けました。
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ── 自律を支える足場 ───────────────── -->
+  <section>
+    <div class="eyebrow">Runtime</div>
+    <h2>自律が続くための足場</h2>
+    <p class="intro">自律は「賢く判断すること」だけでは保ちません。<wbr>止まったことに誰も気づかない、<wbr>という壊れ方をするからです。<wbr>コードの担当はここだけです。</p>
+
+    <div class="duties">
+      <div><span class="k">01</span><span><b>セッションを起こし続ける</b><span>20 分ごとに死活を見る。文脈が上限に達したら、健全でも入れ替える</span></span></div>
+      <div><span class="k">02</span><span><b>道具を渡す</b><span>タスクソースの読み書き、通知、rebase の仕分け、検証用コンテナの回収</span></span></div>
+      <div><span class="k">03</span><span><b>外から状態を読む</b><span>AI が倒れていても答える。壊れているときにこそ知りたいので、AI を経由しない</span></span></div>
+      <div><span class="k">04</span><span><b>健全性を定義する</b><span>応答するかではなく、巡回しているか。停滞はハートビートだけが区別する</span></span></div>
+    </div>
+
+    <pre><span class="c">健全 ≝</span> セッションが一覧に存在し、
+     かつ終端状態でなく、
+     かつ<strong>ハートビートが新しい</strong></pre>
+
+    <p class="intro">常駐型に固有かつ最も起きやすい故障は、<wbr>プロセスの死ではなく<strong>セッションの停滞</strong>です。<wbr>文脈が劣化したセッションは応答しますが巡回を止めます。<wbr>プロセスは存在し続けるので、<wbr>存在確認だけの監視は永久に「健全」と報告します。</p>
+
+    <div class="metrics">
+      <div><b>85%</b><span>8 日間の支出のうち、文脈の読み直しが占めた割合</span></div>
+      <div><b>6%</b><span>同じ期間で、出力が占めた割合</span></div>
+      <div><b>300k</b><span>常駐セッションを入れ替える文脈量の既定</span></div>
+      <div><b>400k</b><span>子に引き継ぎを書かせる文脈量の既定</span></div>
+    </div>
+    <p class="intro">入れ替えの基準が時間ではなく文脈量なのはこのためです。<wbr>1 ターンの費用は抱えている文脈の大きさで決まり、<wbr>文脈は減りません。<wbr>稼働時間の上限は、<wbr><strong>文脈を測れなかったときの保険</strong>にすぎません。</p>
+  </section>
+
+  <!-- ── 散文 ───────────────────────────── -->
+  <section>
+    <div class="eyebrow">Why prose</div>
+    <h2>委譲の線引きは、<wbr>条件分岐では書けない</h2>
+    <p class="intro">「これは人間に聞くべきか、<wbr>自分で決めてよいか」は、<wbr>状態機械に落ちません。<wbr>だから判断と制御フローは 846 行の散文で書かれていて、<wbr>TypeScript 6,520 行はそれを走らせ続けることに徹します。</p>
+    <div class="quote">
+      <div class="path">prompts/orchestrator.md</div>
+      <blockquote>子が <code>blocked</code> になるのは、<wbr>人間の判断を待っているときです。<wbr><strong>この状態は時間では変わりません。</strong><wbr>子はセッションの中で待ち続けるだけで、<wbr>人間からは見えません。<wbr>あなたが渡さない限り、<wbr>誰も気づかないまま止まり続けます。</blockquote>
+    </div>
+    <p class="intro">これは仕様書ではなく、<wbr>実行される制御フローそのものです。<wbr>挙動を変えるときは、<wbr>この文章を書き直します。</p>
+  </section>
+
+  <!-- ── 組み込み ───────────────────────── -->
+  <section>
+    <div class="eyebrow">Embedding</div>
+    <h2>submodule で取り込み、<wbr>重ねて使う</h2>
+    <p class="intro">core は自分の勤め先を知りません。<wbr>取り込む側が、<wbr>プロンプトを重ねて子の種別を足し、<wbr>自分のディスパッチャに core のジョブを並べます。</p>
+
+    <pre><span class="c"># プロンプトは後勝ちで重なる</span>
+ORCHESTRATOR_PROMPT_SOURCE_DIRS=core/prompts,prompts
+ORCHESTRATOR_REPO_DIR=/path/to/your-repo</pre>
+
+    <div class="slots">
+      <div><code>{{childRules}}</code><span>各ソースの <code>child/rules.json</code> から、子の種別の表を組み立てる</span></div>
+      <div><code>{{extraSections}}</code><span>指示ファイルの末尾に、取り込む側の節を連結する</span></div>
+      <div><code>{{coreDir}}</code> / <code>{{repoDir}}</code><span>core の CLI と、取り込む側のスクリプトを別々に指す</span></div>
+      <div><code>TaskProvider</code><span>Linear と ClickUp の実装が入った 10 メソッドの interface</span></div>
+    </div>
+
+    <p class="intro">ステータス名も設定から来ます。<wbr><code>workflow.json</code> に書いた名前が描画のときにプロンプトへ差し込まれるので、<wbr><code>Test</code> を <code>deploy &amp; test</code> と呼ぶワークスペースでも文章がそのまま通ります。</p>
+  </section>
+
+  <section class="closing">
+    <p>AI がボトルネックではない、<wbr>という前提で組んだ開発ループです。<wbr>ボトルネックは人間の4つの用事で、<wbr>そこへ渡す量をいかに減らすかが設計の中心にあります。</p>
+    <small class="mono">github.com/nisioka/claude-task-orchestrator</small>
+  </section>
+
+</div>
+</body>
+</html>
