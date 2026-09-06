@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 372" width="880" height="372" role="img" aria-label="cron starts the supervisor, the resident session dispatches child agents, and the status view reads files without going through the session">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0l10 5-10 5z" fill="#8B96A1"/>
+    </marker>
+    <marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0l10 5-10 5z" fill="#55B7A4"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .m { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+
+  <rect x="8" y="146" width="112" height="52" rx="3" fill="#101720" stroke="#35424D"/>
+  <text x="64" y="168" text-anchor="middle" font-size="13" font-weight="600" fill="#E7EBEF">cron</text>
+  <text x="64" y="186" text-anchor="middle" font-size="11" fill="#8B96A1" class="m">20 min</text>
+  <path d="M124 172h44" fill="none" stroke="#8B96A1" stroke-width="1.4" marker-end="url(#a)"/>
+
+  <rect x="172" y="134" width="150" height="76" rx="3" fill="#151C23" stroke="#35424D"/>
+  <text x="247" y="160" text-anchor="middle" font-size="13" font-weight="600" fill="#E7EBEF">supervisor</text>
+  <text x="247" y="180" text-anchor="middle" font-size="11" fill="#A3AEB8">
+    <tspan x="247">liveness and recycling</tspan>
+    <tspan x="247" dy="1.4em">renders the prompts</tspan>
+  </text>
+  <path d="M326 172h48" fill="none" stroke="#8B96A1" stroke-width="1.4" marker-end="url(#a)"/>
+  <text x="350" y="163" text-anchor="middle" font-size="10" fill="#8B96A1">start</text>
+
+  <rect x="378" y="112" width="186" height="120" rx="3" fill="#151C23" stroke="#55B7A4" stroke-width="2"/>
+  <text x="471" y="142" text-anchor="middle" font-size="14" font-weight="700" fill="#55B7A4">resident session</text>
+  <text x="471" y="164" text-anchor="middle" font-size="11" fill="#A3AEB8">
+    <tspan x="471">a Claude Code session</tspan>
+    <tspan x="471" dy="1.4em">reads the instruction file</tspan>
+    <tspan x="471" dy="1.4em">and patrols</tspan>
+  </text>
+  <text x="471" y="222" text-anchor="middle" font-size="10" fill="#8B96A1" class="m">recycled at ctx 300k</text>
+
+  <rect x="378" y="16" width="186" height="60" rx="3" fill="#101720" stroke="#35424D"/>
+  <text x="471" y="40" text-anchor="middle" font-size="13" font-weight="600" fill="#E7EBEF">task source</text>
+  <text x="471" y="60" text-anchor="middle" font-size="11" fill="#8B96A1" class="m">Linear / ClickUp</text>
+  <path d="M449 80v24" fill="none" stroke="#8B96A1" stroke-width="1.4" marker-end="url(#a)"/>
+  <path d="M495 104v-24" fill="none" stroke="#8B96A1" stroke-width="1.4" marker-end="url(#a)"/>
+
+  <path d="M568 152h44" fill="none" stroke="#8B96A1" stroke-width="1.4" marker-end="url(#a)"/>
+  <text x="590" y="143" text-anchor="middle" font-size="10" fill="#8B96A1">dispatch</text>
+  <rect x="616" y="112" width="180" height="40" rx="3" fill="#151C23" stroke="#35424D"/>
+  <text x="706" y="137" text-anchor="middle" font-size="12" fill="#E7EBEF">child agent</text>
+  <rect x="628" y="160" width="180" height="40" rx="3" fill="#151C23" stroke="#35424D"/>
+  <text x="718" y="185" text-anchor="middle" font-size="12" fill="#E7EBEF">child agent</text>
+  <text x="718" y="220" text-anchor="middle" font-size="10" fill="#8B96A1" class="m">hands over at ctx 400k</text>
+
+  <rect x="172" y="280" width="392" height="58" rx="3" fill="#101720" stroke="#35424D" stroke-dasharray="4 3"/>
+  <text x="368" y="304" text-anchor="middle" font-size="12" font-weight="600" fill="#E7EBEF">heartbeat · job state · transcript</text>
+  <text x="368" y="324" text-anchor="middle" font-size="11" fill="#8B96A1">files outside the session</text>
+  <path d="M471 236v40" fill="none" stroke="#8B96A1" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#a)"/>
+  <path d="M706 204v72H570" fill="none" stroke="#8B96A1" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#a)"/>
+  <path d="M247 214v62" fill="none" stroke="#8B96A1" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#a)"/>
+
+  <rect x="616" y="280" width="180" height="58" rx="3" fill="#151C23" stroke="#55B7A4"/>
+  <text x="706" y="304" text-anchor="middle" font-size="13" font-weight="600" fill="#55B7A4">orchestrator-status</text>
+  <text x="706" y="324" text-anchor="middle" font-size="11" fill="#A3AEB8">read-only, from outside</text>
+  <path d="M568 308h44" fill="none" stroke="#55B7A4" stroke-width="1.4" marker-end="url(#as)"/>
+</svg>

@@ -208,6 +208,11 @@
   .closing { border-top: 2px solid var(--ink); padding-top: 1.5rem; display: flex; flex-direction: column; gap: .9rem; }
   .closing p { font-size: var(--s1); max-width: 43ch; line-height: 1.8; }
   .closing small { color: var(--ink-3); font-size: .84rem; }
+
+  .lang { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .78rem; letter-spacing: .06em; color: var(--ink-3); display: flex; gap: .5rem; }
+  .lang a { color: var(--ai); text-decoration: none; border-bottom: 1px solid transparent; }
+  .lang a:hover, .lang a:focus-visible { border-bottom-color: var(--ai); }
+  .lang span { color: var(--ink-3); }
   :focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; }
 </style>
 </head>
@@ -215,6 +220,7 @@
 <div class="wrap">
 
   <header class="hero">
+    <div class="lang"><a href="en/">English</a> · <span>日本語</span></div>
     <div class="eyebrow">claude-task-orchestrator</div>
     <h1><span class="ai">AI が主体</span>で回し、<wbr>人間は4つの用事にだけ呼ばれる</h1>
     <p class="lede">実装もトリアージも進行管理も AI の責務です。<wbr>人間に頼まれるのを待つ立場ではありません。<wbr>人間にしかできない4つに来たときだけ、<wbr>担当者を渡して止まります。</p>
