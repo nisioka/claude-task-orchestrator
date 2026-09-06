@@ -135,6 +135,15 @@ export interface NewTask {
 /** Only the named properties change. Omitted ones are left alone. */
 export interface TaskPatch {
   title?: string;
+  /**
+   * Replaces the description outright.
+   *
+   * There is no merge here: the only safe merge is one the caller can see, so
+   * a caller changing part of it reads the task first. `header.ts` is the one
+   * part this system rewrites, and it explains what may go in a description
+   * that is going to be rewritten.
+   */
+  description?: string;
   status?: string;
   assignee?: ActorRole | ActorId;
   addLabels?: string[];

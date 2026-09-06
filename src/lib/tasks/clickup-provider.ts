@@ -46,6 +46,22 @@ const PRIORITY_BY_NAME: Record<string, TaskPriority> = {
   normal: "normal",
   low: "low",
 };
+/**
+ * How many times a rate-limited request is retried.
+ *
+ * ClickUp allows 100 requests a minute on the free plan, and a sync that
+ * touches every task goes past that easily. Without this the caller sees a 429
+ * as an ordinary failure and the work is simply skipped.
+ */
+const RATE_LIMIT_RETRIES = 4;
+
+/** Fallback wait when the response does not say how long to hold off. */
+const RATE_LIMIT_PAUSE_MS = 20_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /** Colour for tags this adapter creates. */
 const NEW_LABEL_COLOR = "#6B7280";
 
@@ -147,6 +163,26 @@ function fieldsOf(raw: RawTask): Record<string, string> | null {
   return out;
 }
 
+/**
+ * How long to hold off after a 429, from whatever the response volunteers.
+ *
+ * `Retry-After` is in seconds; `X-RateLimit-Reset` is an absolute epoch second.
+ * Neither is guaranteed, so a fixed pause backs them up — the window is a
+ * minute, so waiting too long costs one cycle and waiting too little costs
+ * another rejection.
+ */
+function retryDelayMs(response: Response): number {
+  const after = Number(response.headers.get("retry-after"));
+  if (Number.isFinite(after) && after > 0) return after * 1000;
+
+  const reset = Number(response.headers.get("x-ratelimit-reset"));
+  if (Number.isFinite(reset) && reset > 0) {
+    const wait = reset * 1000 - Date.now();
+    if (wait > 0 && wait < 120_000) return wait + 500;
+  }
+  return RATE_LIMIT_PAUSE_MS;
+}
+
 function actorOf(user: RawUser): Actor {
   return { id: String(user.id), name: user.username ?? String(user.id), email: user.email ?? undefined };
 }
@@ -184,22 +220,31 @@ export class ClickUpTaskProvider implements TaskProvider {
     path: string,
     body?: unknown,
   ): Promise<T> {
-    const response = await this.fetchImpl(`${API}${path}`, {
-      method,
-      headers: {
-        Authorization: this.apiKey,
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    for (let attempt = 0; ; attempt++) {
+      const response = await this.fetchImpl(`${API}${path}`, {
+        method,
+        headers: {
+          Authorization: this.apiKey,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
 
-    const text = await response.text();
-    if (!response.ok) {
-      // ClickUp puts an actionable message in the body; the status alone says
-      // little (a wrong status name and a missing task are both 400/401).
-      throw new Error(`ClickUp ${method} ${path} が失敗しました (${response.status}): ${text}`);
+      // 429 は「まだ空いていない」であって失敗ではない。呼び出し側へ上げると、
+      // その1件の仕事が黙って落ちる
+      if (response.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+        await sleep(retryDelayMs(response));
+        continue;
+      }
+
+      const text = await response.text();
+      if (!response.ok) {
+        // ClickUp puts an actionable message in the body; the status alone says
+        // little (a wrong status name and a missing task are both 400/401).
+        throw new Error(`ClickUp ${method} ${path} が失敗しました (${response.status}): ${text}`);
+      }
+      return (text ? JSON.parse(text) : {}) as T;
     }
-    return (text ? JSON.parse(text) : {}) as T;
   }
 
   // ─── Workspace lookups ────────────────────────────────────────────
@@ -538,6 +583,8 @@ export class ClickUpTaskProvider implements TaskProvider {
   async update(id: TaskId, patch: TaskPatch): Promise<void> {
     const body: Record<string, unknown> = {};
     if (patch.title !== undefined) body.name = patch.title;
+    // 素の `description` は平文への射影なので、書くのは markdown のほう
+    if (patch.description !== undefined) body.markdown_description = patch.description;
     if (patch.status !== undefined) body.status = patch.status;
     if (patch.assignee !== undefined) {
       const current = await this.request<RawTask>("GET", `/task/${id}`);

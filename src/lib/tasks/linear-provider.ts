@@ -343,6 +343,9 @@ export class LinearTaskProvider implements TaskProvider {
     if (!issue) throw new Error(`タスクが見つかりません: ${id}`);
 
     if (patch.title !== undefined) await updateIssueTitle(this.client, issue.id, patch.title);
+    if (patch.description !== undefined) {
+      await this.client.updateIssue(issue.id, { description: patch.description });
+    }
     if (patch.status !== undefined) await updateIssueStatus(this.client, issue.id, patch.status);
     if (patch.assignee !== undefined) {
       const assigneeId =
