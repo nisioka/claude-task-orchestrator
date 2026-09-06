@@ -1,9 +1,12 @@
 /**
  * "start-after" scheduling marker.
  *
- * A ticket can defer its own dispatch by carrying a marker in its description:
+ * A ticket can defer its own dispatch by carrying an entry in the block at the
+ * top of its description:
  *
- *   <!-- start-after: 2026-08-12T14:00 -->
+ *   orchestrator:begin
+ *   start-after: 2026-08-12T14:00
+ *   orchestrator:end
  *
  * The orchestrator treats a `Todo` issue whose start-after is still in the
  * future as not-yet-dispatchable, and picks it up on the first patrol at or
@@ -11,11 +14,16 @@
  * the whole contract, so a delay of up to one patrol interval is expected and
  * fine.
  *
- * The marker lives in the description, not in a field or a label: Linear's due
- * date is date-only (no time of day), and labels are reserved for
- * classification and cannot carry a value (requirement 3.10). The description
- * is also what the orchestrator already reads, and follows the existing
- * `<!-- company-linear-id: … -->` convention.
+ * It lives in the description, not in a field or a label: Linear's due date is
+ * date-only (no time of day), labels are reserved for classification and cannot
+ * carry a value (requirement 3.10), and per-issue custom fields are metered on
+ * ClickUp's free plan. The description is also what the orchestrator already
+ * reads.
+ *
+ * The older `<!-- start-after: … -->` comment is still read, so a ticket written
+ * before the block existed keeps its reservation, but nothing writes one any
+ * more: an HTML comment sharing a description with a URL makes ClickUp corrupt
+ * both on every save (see `tasks/header.ts`).
  *
  * A missing timezone offset is read as JST, because the human who writes the
  * marker thinks in JST (requirement 11). An explicit offset is honoured as
@@ -24,11 +32,16 @@
  * instead of dispatching it at the wrong time (or never).
  */
 
+import { readHeader } from "./tasks/header.js";
+
 /** JST. Applied when the marker omits an offset. */
 const JST_OFFSET = "+09:00";
 
-/** Pulls the raw value out of `<!-- start-after: … -->`. First occurrence wins. */
-const MARKER_PATTERN = /<!--\s*start-after:\s*(.+?)\s*-->/i;
+/** The entry name in the block. */
+const START_AFTER_KEY = "start-after";
+
+/** The older comment form. Read only. First occurrence wins. */
+const LEGACY_MARKER = /<!--\s*start-after:\s*(.+?)\s*-->/i;
 
 /**
  * Structured datetime: `YYYY-MM-DD`, optional `THH:MM[:SS]` (space accepted in
@@ -45,7 +58,7 @@ export type StartAfter =
   | { kind: "invalid"; raw: string };
 
 /**
- * Parse the start-after marker out of an issue description.
+ * Parse the start-after value out of an issue description.
  *
  * Returns `none` when there is no marker at all, `scheduled` with the resolved
  * instant when the value parses, and `invalid` (carrying the offending text)
@@ -54,10 +67,10 @@ export type StartAfter =
 export function parseStartAfter(description: string | null | undefined): StartAfter {
   if (!description) return { kind: "none" };
 
-  const marker = MARKER_PATTERN.exec(description);
-  if (!marker) return { kind: "none" };
+  const raw = (readHeader(description)[START_AFTER_KEY] ?? LEGACY_MARKER.exec(description)?.[1] ?? "")
+    .trim();
+  if (raw === "") return { kind: "none" };
 
-  const raw = marker[1].trim();
   const at = parseDateTime(raw);
   if (!at) return { kind: "invalid", raw };
   return { kind: "scheduled", at, raw };

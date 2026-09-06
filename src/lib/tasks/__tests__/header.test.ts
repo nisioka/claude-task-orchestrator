@@ -4,6 +4,44 @@ import { readHeader, stripHeader, upsertHeader } from "../header.js";
 const BODY = "company-linear-id: ABC-1\n会社Linear: https://example.com/ABC-1\n\n## 見出し\n\n- 箇条書き\n";
 
 describe("upsertHeader", () => {
+  it("takes the name's old HTML comment out of the body", () => {
+    const result = upsertHeader(
+      "<!-- start-after: 2026-08-12T14:00 -->\n\n本文",
+      { "start-after": "2027-01-01T00:00" },
+    );
+
+    expect(result).not.toContain("<!--");
+    expect(readHeader(result)["start-after"]).toBe("2027-01-01T00:00");
+    expect(stripHeader(result).trim()).toBe("本文");
+  });
+
+  it("takes it out when the entry is being removed, so a cancel really cancels", () => {
+    // 消したのに旧コメントが残ると、次に読んだとき予約が生き返る
+    const result = upsertHeader(
+      "<!-- start-after: 2026-08-12T14:00 -->\n\n本文",
+      { "start-after": "" },
+    );
+
+    expect(result).toBe("本文");
+  });
+
+  it("leaves the comments of names it is not writing", () => {
+    const result = upsertHeader(
+      "<!-- start-after: 2026-08-12T14:00 -->\n<!-- company-linear-id: ENG-1 -->\n\n本文",
+      { worktree: "/abs/path" },
+    );
+
+    expect(result).toContain("<!-- start-after: 2026-08-12T14:00 -->");
+    expect(result).toContain("<!-- company-linear-id: ENG-1 -->");
+  });
+
+  it("does not let a name with regex characters match anything else", () => {
+    const result = upsertHeader("<!-- a.c: x -->\n\n本文", { "a.c": "1" });
+
+    expect(result).not.toContain("<!--");
+    expect(upsertHeader("<!-- abc: x -->\n\n本文", { "a.c": "1" })).toContain("<!-- abc: x -->");
+  });
+
   it("puts the block above what was already there", () => {
     const out = upsertHeader(BODY, { worktree: "/abs/wt" });
 
