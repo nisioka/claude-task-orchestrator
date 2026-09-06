@@ -132,6 +132,7 @@ function toTask(issue: TaskIssue): Task {
  */
 export class LinearTaskProvider implements TaskProvider {
   readonly name = "linear";
+  readonly supportsFields = false;
 
   private readonly client: LinearClient;
   private actorCache = new Map<ActorRole, Actor>();

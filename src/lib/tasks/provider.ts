@@ -25,6 +25,16 @@ export interface TaskProvider {
   /** Human-readable name of the backend, for logs and status output. */
   readonly name: string;
 
+  /**
+   * Whether this backend can store the named values in `NewTask.fields`.
+   *
+   * Callers ask before sending them. Writing a field is an error on a backend
+   * that has none — that is deliberate, so a typo cannot be swallowed — which
+   * leaves the caller needing a way to tell "there is nowhere to put this" from
+   * "I got the name wrong". This is that way.
+   */
+  readonly supportsFields: boolean;
+
   list(filter?: TaskFilter): Promise<Task[]>;
   get(id: TaskId, opts?: { comments?: number }): Promise<TaskDetail | null>;
 

@@ -446,6 +446,10 @@ describe("getMany", () => {
 // ─── Writing ────────────────────────────────────────────────────────
 
 describe("custom fields", () => {
+  it("says it can store them", () => {
+    expect(provider.supportsFields).toBe(true);
+  });
+
   it("reads the ones that hold something", async () => {
     tasksOn(fake, "L-work", [
       rawTask({
