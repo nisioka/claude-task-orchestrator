@@ -75,7 +75,7 @@ describe("parseStartAfter", () => {
 
   it("prefers the block when a description carries both", () => {
     const result = parseStartAfter(
-      block("2027-01-01T00:00") + block("2026-08-12T14:00"),
+      block("2027-01-01T00:00") + "<!-- start-after: 2026-08-12T14:00 -->",
     );
     if (result.kind !== "scheduled") throw new Error("expected scheduled");
     expect(result.at.toISOString()).toBe("2026-12-31T15:00:00.000Z");

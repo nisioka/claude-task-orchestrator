@@ -18,6 +18,9 @@
  * bare words and the same description survives repeated rewriting untouched,
  * headings, bullets, code fences and all.
  *
+ * The same rule applies to what the block replaces: writing a name into it
+ * removes that name's old comment from the body, so the two can never disagree.
+ *
  * A markdown link whose text differs from its URL is unsafe for the same
  * reason, so values go in bare. ClickUp normalises a bare URL to `[url](url)`
  * once and then leaves it alone; `readHeader` undoes that so a caller gets back
@@ -37,6 +40,20 @@ const BLOCK = /^[ \t]*orchestrator:begin[ \t]*$([\s\S]*?)^[ \t]*orchestrator:end
  * and older blocks were written with bullets.
  */
 const ENTRY = /^\s*(?:[-*]\s+)?([^:\n]+?)\s*:\s*(.*?)\s*$/;
+
+/**
+ * The comment form this block replaced, for one given name.
+ *
+ * Only ever removed, never written. Writing a name into the block has to take
+ * the old comment with it: an entry that is deleted leaves nothing behind, so a
+ * surviving `<!-- start-after: … -->` would quietly reinstate the reservation
+ * that was just cancelled — and while both are present, every save compounds
+ * the escaping damage the block exists to avoid.
+ */
+function legacyComment(name: string): RegExp {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`<!--[ \\t]*${escaped}[ \\t]*:[\\s\\S]*?-->[ \\t]*\\n?`, "gi");
+}
 
 /** `[url](url)`, which is what ClickUp makes of a bare URL. */
 const SELF_LINK = /^\[([^\]]+)\]\(\1\)$/;
@@ -80,6 +97,9 @@ export function stripHeader(description: string | null | undefined): string {
  * removes an entry, so a worktree that has been folded can be cleared rather
  * than left pointing at a directory that is gone. When nothing is left, the
  * block goes with it — an empty block is noise.
+ *
+ * Every name written here also loses its old `<!-- name: … -->` comment from the
+ * body, so the block is the only place that name is answered from.
  */
 export function upsertHeader(
   description: string | null | undefined,
@@ -91,7 +111,10 @@ export function upsertHeader(
     else merged[name] = value;
   }
 
-  const body = stripHeader(description);
+  let body = stripHeader(description);
+  for (const name of Object.keys(updates)) body = body.replace(legacyComment(name), "");
+  body = body.replace(/^\s+/, "");
+
   const lines = Object.entries(merged).map(([name, value]) => `${name}: ${value}`);
   if (lines.length === 0) return body;
 
