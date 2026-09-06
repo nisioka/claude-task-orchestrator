@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 392" width="860" height="392" role="img" aria-label="The AI runs its own loop and hands off to the human for four duties only">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0l10 5-10 5z" fill="#9A6314"/>
+    </marker>
+    <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0l10 5-10 5z" fill="#16695D"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .m { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+
+  <circle cx="216" cy="192" r="148" fill="none" stroke="#16695D" stroke-width="2"/>
+  <text x="216" y="84" text-anchor="middle" font-size="15" font-weight="700" fill="#16695D">The AI owns</text>
+  <text x="216" y="126" text-anchor="middle" font-size="13" fill="#101720">
+    <tspan x="216">implementation</tspan>
+    <tspan x="216" dy="1.6em">triage and drafting requirements</tspan>
+    <tspan x="216" dy="1.6em">status transitions</tspan>
+    <tspan x="216" dy="1.6em">tracking progress</tspan>
+    <tspan x="216" dy="1.6em">diagnosing failures, retrying</tspan>
+    <tspan x="216" dy="1.6em">acting on review comments</tspan>
+  </text>
+  <text x="216" y="312" text-anchor="middle" font-size="11" fill="#7A8590" class="m">patrols every 10-30 min</text>
+
+  <path d="M368 126h112" fill="none" stroke="#9A6314" stroke-width="1.6" marker-end="url(#ah)"/>
+  <path d="M368 168h112" fill="none" stroke="#9A6314" stroke-width="1.6" marker-end="url(#ah)"/>
+  <path d="M368 210h112" fill="none" stroke="#9A6314" stroke-width="1.6" marker-end="url(#ah)"/>
+  <path d="M368 252h112" fill="none" stroke="#9A6314" stroke-width="1.6" marker-end="url(#ah)"/>
+  <text x="424" y="118" text-anchor="middle" font-size="10" fill="#9A6314" class="m">a</text>
+  <text x="424" y="160" text-anchor="middle" font-size="10" fill="#9A6314" class="m">b</text>
+  <text x="424" y="202" text-anchor="middle" font-size="10" fill="#9A6314" class="m">c</text>
+  <text x="424" y="244" text-anchor="middle" font-size="10" fill="#9A6314" class="m">d</text>
+
+  <rect x="488" y="92" width="360" height="200" rx="3" fill="#FFFFFF" stroke="#9A6314" stroke-width="2"/>
+  <text x="668" y="122" text-anchor="middle" font-size="15" font-weight="700" fill="#9A6314">The human owns four things</text>
+  <text x="510" y="156" font-size="12.5" fill="#101720">
+    <tspan x="510">a   confirming requirements and design</tspan>
+    <tspan x="510" dy="1.8em">b   testing the running application</tspan>
+    <tspan x="510" dy="1.8em">c   code review and merging</tspan>
+    <tspan x="510" dy="1.8em">d   talking to other people</tspan>
+  </text>
+  <text x="668" y="274" text-anchor="middle" font-size="11" fill="#7A8590">never chases. answers in full when asked</text>
+
+  <path d="M668 296v44H216v-4" fill="none" stroke="#16695D" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#aa)"/>
+  <text x="442" y="360" text-anchor="middle" font-size="11.5" fill="#16695D">assignee comes back, the AI picks up from there</text>
+</svg>
