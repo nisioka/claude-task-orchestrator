@@ -1,0 +1,27 @@
+{
+  "name": "claude-task-orchestrator",
+  "version": "0.1.0",
+  "description": "A resident Claude Code session that dispatches child agents against a single task source",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tasks:list": "tsx src/cli/personal-issues.ts",
+    "tasks:comment": "tsx src/cli/personal-comment.ts",
+    "tasks:status": "tsx src/cli/personal-status.ts",
+    "reminder:send": "tsx src/cli/send-reminder.ts"
+  },
+  "dependencies": {
+    "@linear/sdk": "^29.0.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.6"
+  }
+}
