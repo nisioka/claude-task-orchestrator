@@ -400,8 +400,25 @@ export function parseSupervisorArgs(argv: string[]): SupervisorOptions {
   return { forceRestart: argv.includes("--restart") };
 }
 
+/**
+ * The checks that reach outside the process.
+ *
+ * Only the residency check is here, and only because it shells out to
+ * `systemctl` and `loginctl`: their answers differ between a developer's
+ * machine and CI, which made "did the supervisor stay quiet?" depend on where
+ * the test ran rather than on the code.
+ */
+export interface SupervisorIo {
+  checkPrerequisites(): Promise<PrerequisiteReport>;
+}
+
+export const REAL_SUPERVISOR_IO: SupervisorIo = {
+  checkPrerequisites: () => checkResidencyPrerequisites(),
+};
+
 export async function runOrchestratorSupervisor(
   options: SupervisorOptions = {},
+  io: SupervisorIo = REAL_SUPERVISOR_IO,
 ): Promise<void> {
   const appConfig = loadCoreConfig();
   const config = loadOrchestratorConfig();
@@ -491,7 +508,7 @@ export async function runOrchestratorSupervisor(
     reason = "再起動";
   }
 
-  const prerequisites = await checkResidencyPrerequisites();
+  const prerequisites = await io.checkPrerequisites();
 
   let launched: AgentSummary;
   try {

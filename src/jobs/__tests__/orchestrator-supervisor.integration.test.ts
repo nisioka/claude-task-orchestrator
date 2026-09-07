@@ -161,9 +161,20 @@ async function writeHeartbeat(at: Date): Promise<void> {
   );
 }
 
-async function run(options: { forceRestart?: boolean } = {}): Promise<void> {
+/**
+ * `prerequisites` は既定で満たされていることにする。
+ *
+ * 実物は `systemctl` と `loginctl` を叩くので、開発機と CI で答えが変わる。
+ * 素通ししていたせいで「黙ったか」の判定が走らせた場所に依存していた。
+ */
+async function run(
+  options: { forceRestart?: boolean } = {},
+  prerequisites = { satisfied: true, problems: [] as string[] },
+): Promise<void> {
   const { runOrchestratorSupervisor } = await import("../orchestrator-supervisor.js");
-  await runOrchestratorSupervisor(options);
+  await runOrchestratorSupervisor(options, {
+    checkPrerequisites: async () => prerequisites,
+  });
 }
 
 async function recordedSessionId(): Promise<string | null> {
@@ -395,6 +406,17 @@ describe("runOrchestratorSupervisor --restart", () => {
 
     expect(sent).toEqual([]);
     expect(await recordedSessionId()).not.toBe("healthy-1");
+  });
+
+  it("speaks up when the prerequisites are unmet, quiet restart or not", async () => {
+    // 常駐が成立していない。黙って起動すると、動いているつもりの空回りが続く
+    await serveControlSocket();
+    await seedRegistry([{ sessionId: "healthy-1" }]);
+    await writeHeartbeat(new Date());
+
+    await run({ forceRestart: true }, { satisfied: false, problems: ["linger が無効です"] });
+
+    expect(JSON.stringify(sent)).toContain("前提条件が未達");
   });
 
   it("says why it restarted when the old session would not die", async () => {
