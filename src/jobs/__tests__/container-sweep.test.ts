@@ -52,16 +52,16 @@ describe("buildSweepPayload", () => {
   });
 
   it("does not list the projects it stopped one by one", () => {
-    const payload = buildSweepPayload([decision()], report, [], false);
-    const fields = payload.embeds?.[0].fields ?? [];
+    const payload = buildSweepPayload([decision(), decision()], [], [], false);
 
-    expect(fields.map((f) => f.name)).not.toContain("repo-abcd1234");
+    expect(payload.embeds?.[0].fields ?? []).toHaveLength(0);
   });
 
-  it("colours a failed teardown differently from a mere report", () => {
+  it("colours a failed teardown red and a mere report amber", () => {
     const failed = buildSweepPayload([], [], [{ decision: decision(), error: "boom" }], false);
     const reported = buildSweepPayload([], report, [], false);
 
-    expect(failed.embeds?.[0].color).not.toBe(reported.embeds?.[0].color);
+    expect(failed.embeds?.[0].color).toBe(0xff4444);
+    expect(reported.embeds?.[0].color).toBe(0xffa000);
   });
 });

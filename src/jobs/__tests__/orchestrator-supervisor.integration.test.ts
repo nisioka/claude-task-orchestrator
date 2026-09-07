@@ -278,15 +278,29 @@ describe("runOrchestratorSupervisor", () => {
     expect(orchestrators.map((a) => a.sessionId)).toContain(recorded);
   });
 
-  it("reports the stall before restarting", async () => {
+  it("says nothing beyond the stall itself", async () => {
+    // 1つの出来事に2通は出さない。停滞の報せが「終了させて再起動します」まで
+    // 含んでいるので、その後の起動を重ねて知らせる必要がない
+    await serveControlSocket();
+    await seedRegistry([{ sessionId: "stalled-2" }]);
+    await writeHeartbeat(new Date(Date.now() - 3 * 3600 * 1000));
+
+    await run();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].embeds?.[0].title).toContain("停滞");
+  });
+
+  it("says when the patrol stopped, and that it is being restarted", async () => {
     await seedRegistry([{ sessionId: "stalled-1" }]);
     await writeHeartbeat(new Date(Date.now() - 3 * 1800 * 1000));
 
     await run();
 
-    const titles = sent.map((p) => p.embeds?.[0].title ?? "");
-    expect(titles.some((t) => t.includes("停滞"))).toBe(true);
-    expect(titles.some((t) => t.includes("停滞のため再起動"))).toBe(true);
+    const embed = sent[0].embeds?.[0];
+    expect(embed?.title).toContain("停滞");
+    // 「終了させて再起動します」まで含むので、起動を別に知らせなくても伝わる
+    expect(embed?.description).toContain("再起動");
   });
 
   it("does not treat a finished session as alive", async () => {

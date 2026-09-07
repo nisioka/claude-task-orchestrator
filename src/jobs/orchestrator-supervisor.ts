@@ -480,20 +480,25 @@ export async function runOrchestratorSupervisor(
 
   let reason: StartReason = "初回起動";
 
-  // 入れ替えそのものは通知しない。設計どおりに起きて自分で完結する事象で、
-  // 人間に手はない。**ただし旧セッションを終了できなかったときは別**で、
-  // 二重稼働になりうるので `claude agents` を見てもらう必要がある。
-  let routine = false;
+  // **入れ替えの報せは、その判断をした分岐が持つ。** 起動そのものは後始末なので、
+  // 分岐が口を開いた（あるいは黙ると決めた）なら重ねて言わない。1つの出来事に
+  // 2通出ると、通知そのものが読み飛ばされるようになる。
+  //
+  // だから分岐が何も担当しなかったとき——初回起動と、セッションが消えていた
+  // ときだけ——起動を知らせる。
+  let announceStart = true;
 
   if (options.forceRestart && current) {
+    // 終了できたなら何も起きていないのと同じ。できなかったときだけ、
+    // 二重稼働になりうることを言う。
     const terminated = current.id ? await terminateSession(current.id) : false;
     if (!terminated) await notify(buildReloadPayload(current.sessionId, terminated));
-    routine = terminated;
+    announceStart = false;
     reason = "指示ファイル反映のため再起動";
   } else if (verdict.kind === "healthy" && recycle.kind === "recycle" && current) {
     const terminated = current.id ? await terminateSession(current.id) : false;
     if (!terminated) await notify(buildRecyclePayload(current.sessionId, recycle, terminated));
-    routine = terminated;
+    announceStart = false;
     reason =
       recycle.cause === "context"
         ? "文脈が上限に達したため再起動"
@@ -501,8 +506,12 @@ export async function runOrchestratorSupervisor(
   } else if (verdict.kind === "stalled" && current) {
     // Layer 3: stop the old one first. Leaving it running would put two loops
     // on the same issues.
+    //
+    // 停滞は異常なので必ず言う。ただし言うのはこの1通だけで、この後の起動は
+    // 黙る。停滞の報せが「終了させて再起動します」まで含んでいる。
     const terminated = current.id ? await terminateSession(current.id) : false;
     await notify(buildStalledPayload(verdict.lastHeartbeatAt, terminated));
+    announceStart = false;
     reason = "停滞のため再起動";
   } else if (await readRecordedSessionId(config)) {
     reason = "再起動";
@@ -532,12 +541,9 @@ export async function runOrchestratorSupervisor(
 
   await recordSessionId(config, launched.sessionId);
 
-  // 入れ替えの後始末としての起動は黙る。それ自体は正常系で、直前の入れ替えも
-  // 黙っている以上、ここだけ喋ると結局1巡回に1通出ることになる。
-  //
-  // **前提条件が未達なら、routine でも喋る。** 常駐が成立していない状態を
-  // 黙って起動すると、動いているつもりの空回りが続く。
-  if (!routine || !prerequisites.satisfied) {
+  // **前提条件が未達なら、分岐が何を決めていようと喋る。** 常駐が成立して
+  // いない状態を黙って起動すると、動いているつもりの空回りが続く。
+  if (announceStart || !prerequisites.satisfied) {
     await notify(
       buildStartedPayload(
         launched.sessionId,
