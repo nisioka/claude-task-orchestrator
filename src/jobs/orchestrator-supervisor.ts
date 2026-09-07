@@ -396,12 +396,43 @@ export interface SupervisorOptions {
   forceRestart?: boolean;
 }
 
+/** Read the command line. Only `--restart` changes what the supervisor does. */
 export function parseSupervisorArgs(argv: string[]): SupervisorOptions {
   return { forceRestart: argv.includes("--restart") };
 }
 
+/**
+ * The checks that reach outside the process.
+ *
+ * Only the residency check is here, and only because it shells out to
+ * `systemctl` and `loginctl`: their answers differ between a developer's
+ * machine and CI, which made "did the supervisor stay quiet?" depend on where
+ * the test ran rather than on the code.
+ */
+export interface SupervisorIo {
+  checkPrerequisites(): Promise<PrerequisiteReport>;
+}
+
+export const REAL_SUPERVISOR_IO: SupervisorIo = {
+  checkPrerequisites: () => checkResidencyPrerequisites(),
+};
+
+/**
+ * Keep exactly one resident session alive, and replace it when it stops being
+ * worth keeping.
+ *
+ * Three things end a session: it stalled (present and answering, but no longer
+ * patrolling — which a liveness check alone would call healthy forever), its
+ * context grew past what a patrol should cost, or the instruction file changed
+ * and the old text has to be retired from its context.
+ *
+ * Only the first of those is worth telling anyone about. The other two happen
+ * on schedule and finish on their own, so they pass without a word unless the
+ * old session refused to die, which risks two loops on the same issues.
+ */
 export async function runOrchestratorSupervisor(
   options: SupervisorOptions = {},
+  io: SupervisorIo = REAL_SUPERVISOR_IO,
 ): Promise<void> {
   const appConfig = loadCoreConfig();
   const config = loadOrchestratorConfig();
@@ -463,13 +494,25 @@ export async function runOrchestratorSupervisor(
 
   let reason: StartReason = "初回起動";
 
+  // **入れ替えの報せは、その判断をした分岐が持つ。** 起動そのものは後始末なので、
+  // 分岐が口を開いた（あるいは黙ると決めた）なら重ねて言わない。1つの出来事に
+  // 2通出ると、通知そのものが読み飛ばされるようになる。
+  //
+  // だから分岐が何も担当しなかったとき——初回起動と、セッションが消えていた
+  // ときだけ——起動を知らせる。
+  let announceStart = true;
+
   if (options.forceRestart && current) {
+    // 終了できたなら何も起きていないのと同じ。できなかったときだけ、
+    // 二重稼働になりうることを言う。
     const terminated = current.id ? await terminateSession(current.id) : false;
-    await notify(buildReloadPayload(current.sessionId, terminated));
+    if (!terminated) await notify(buildReloadPayload(current.sessionId, terminated));
+    announceStart = false;
     reason = "指示ファイル反映のため再起動";
   } else if (verdict.kind === "healthy" && recycle.kind === "recycle" && current) {
     const terminated = current.id ? await terminateSession(current.id) : false;
-    await notify(buildRecyclePayload(current.sessionId, recycle, terminated));
+    if (!terminated) await notify(buildRecyclePayload(current.sessionId, recycle, terminated));
+    announceStart = false;
     reason =
       recycle.cause === "context"
         ? "文脈が上限に達したため再起動"
@@ -477,14 +520,18 @@ export async function runOrchestratorSupervisor(
   } else if (verdict.kind === "stalled" && current) {
     // Layer 3: stop the old one first. Leaving it running would put two loops
     // on the same issues.
+    //
+    // 停滞は異常なので必ず言う。ただし言うのはこの1通だけで、この後の起動は
+    // 黙る。停滞の報せが「終了させて再起動します」まで含んでいる。
     const terminated = current.id ? await terminateSession(current.id) : false;
     await notify(buildStalledPayload(verdict.lastHeartbeatAt, terminated));
+    announceStart = false;
     reason = "停滞のため再起動";
   } else if (await readRecordedSessionId(config)) {
     reason = "再起動";
   }
 
-  const prerequisites = await checkResidencyPrerequisites();
+  const prerequisites = await io.checkPrerequisites();
 
   let launched: AgentSummary;
   try {
@@ -507,15 +554,20 @@ export async function runOrchestratorSupervisor(
   }
 
   await recordSessionId(config, launched.sessionId);
-  await notify(
-    buildStartedPayload(
-      launched.sessionId,
-      config.orchestratorModel,
-      config.orchestratorEffort,
-      reason,
-      prerequisites,
-    ),
-  );
+
+  // **前提条件が未達なら、分岐が何を決めていようと喋る。** 常駐が成立して
+  // いない状態を黙って起動すると、動いているつもりの空回りが続く。
+  if (announceStart || !prerequisites.satisfied) {
+    await notify(
+      buildStartedPayload(
+        launched.sessionId,
+        config.orchestratorModel,
+        config.orchestratorEffort,
+        reason,
+        prerequisites,
+      ),
+    );
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
