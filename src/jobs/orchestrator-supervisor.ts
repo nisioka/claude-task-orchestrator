@@ -463,13 +463,20 @@ export async function runOrchestratorSupervisor(
 
   let reason: StartReason = "初回起動";
 
+  // 入れ替えそのものは通知しない。設計どおりに起きて自分で完結する事象で、
+  // 人間に手はない。**ただし旧セッションを終了できなかったときは別**で、
+  // 二重稼働になりうるので `claude agents` を見てもらう必要がある。
+  let routine = false;
+
   if (options.forceRestart && current) {
     const terminated = current.id ? await terminateSession(current.id) : false;
-    await notify(buildReloadPayload(current.sessionId, terminated));
+    if (!terminated) await notify(buildReloadPayload(current.sessionId, terminated));
+    routine = terminated;
     reason = "指示ファイル反映のため再起動";
   } else if (verdict.kind === "healthy" && recycle.kind === "recycle" && current) {
     const terminated = current.id ? await terminateSession(current.id) : false;
-    await notify(buildRecyclePayload(current.sessionId, recycle, terminated));
+    if (!terminated) await notify(buildRecyclePayload(current.sessionId, recycle, terminated));
+    routine = terminated;
     reason =
       recycle.cause === "context"
         ? "文脈が上限に達したため再起動"
@@ -507,15 +514,23 @@ export async function runOrchestratorSupervisor(
   }
 
   await recordSessionId(config, launched.sessionId);
-  await notify(
-    buildStartedPayload(
-      launched.sessionId,
-      config.orchestratorModel,
-      config.orchestratorEffort,
-      reason,
-      prerequisites,
-    ),
-  );
+
+  // 入れ替えの後始末としての起動は黙る。それ自体は正常系で、直前の入れ替えも
+  // 黙っている以上、ここだけ喋ると結局1巡回に1通出ることになる。
+  //
+  // **前提条件が未達なら、routine でも喋る。** 常駐が成立していない状態を
+  // 黙って起動すると、動いているつもりの空回りが続く。
+  if (!routine || !prerequisites.satisfied) {
+    await notify(
+      buildStartedPayload(
+        launched.sessionId,
+        config.orchestratorModel,
+        config.orchestratorEffort,
+        reason,
+        prerequisites,
+      ),
+    );
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────

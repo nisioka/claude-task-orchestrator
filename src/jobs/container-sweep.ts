@@ -93,7 +93,8 @@ export async function runContainerSweep(
   );
 
   const torndown = reap.filter((d) => !failures.some((f) => f.decision === d));
-  if (torndown.length === 0 && report.length === 0 && failures.length === 0) return;
+
+  if (!needsAttention(report, failures)) return;
 
   const config = loadCoreConfig();
   await sendNotifications(config,
@@ -104,10 +105,29 @@ export async function runContainerSweep(
 // ─── Notification (pure) ─────────────────────────────────────────────
 
 /**
- * Report what changed, not what the machine looks like.
+ * Whether the run produced anything a person has to look at.
  *
- * `keep` decisions are deliberately absent: they are the steady state, and a
- * notification that lists them every run is one nobody reads by the third day.
+ * A successful teardown is not one of those. It happens on schedule, finishes
+ * on its own, and leaves nothing to decide — so announcing it every hour only
+ * trains the reader to skip the channel, which is where the `report` line that
+ * did need them goes past unread. What was stopped is on stdout, and the cron
+ * log keeps it.
+ */
+export function needsAttention(
+  report: readonly SweepDecision[],
+  failures: readonly unknown[],
+): boolean {
+  return report.length > 0 || failures.length > 0;
+}
+
+/**
+ * Report only what a person has to look at.
+ *
+ * `keep` and successful teardowns are both absent: they are the steady state,
+ * and a notification that lists them every run is one nobody reads by the third
+ * day — which is exactly when the one line that mattered goes past unread. What
+ * was torn down stays as a count, so a message about a failure still says how
+ * much of the run succeeded.
  */
 export function buildSweepPayload(
   reaped: SweepDecision[],
@@ -118,19 +138,10 @@ export function buildSweepPayload(
   const containers = reaped.reduce((sum, d) => sum + d.project.containers, 0);
   const title = dryRun
     ? `\u{1F9F9} 検証用コンテナの掃除（dry-run）`
-    : `\u{1F9F9} 検証用コンテナを停止しました`;
+    : `\u{1F9F9} 検証用コンテナに要確認があります`;
 
   const fields: NonNullable<DiscordEmbed["fields"]> = [];
 
-  for (const d of reaped.slice(0, 20)) {
-    fields.push({
-      name: d.project.project,
-      value: `${d.reason}\n\`${d.branch ?? d.project.workingDir}\` — ${d.project.containers}コンテナ`,
-    });
-  }
-  if (reaped.length > 20) {
-    fields.push({ name: "…", value: `他 ${reaped.length - 20} プロジェクト` });
-  }
   for (const d of report.slice(0, 5)) {
     fields.push({
       name: `⚠️ 要確認: ${d.project.project}`,
@@ -152,7 +163,7 @@ export function buildSweepPayload(
           reaped.length > 0
             ? `${reaped.length} プロジェクト / ${containers} コンテナ${dryRun ? "が対象です" : "を停止しました"}。`
             : "停止した対象はありません。",
-        color: failures.length > 0 ? 0xff4444 : 0x22c55e,
+        color: failures.length > 0 ? 0xff4444 : 0xffa000,
         fields: fields.length > 0 ? fields : undefined,
         timestamp: new Date().toISOString(),
       },

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import type { DiscordPayload } from "../../lib/types.js";
 import { listFakeAgentPids, reapFakeAgentsSince } from "../../lib/__tests__/fake-agent-reaper.js";
 import { ORCHESTRATOR_SESSION_NAME } from "../../lib/orchestrator-config.js";
+import { createServer, type Server } from "node:net";
 
 /**
  * Exercises the supervisor against the fake agent, spending no model usage.
@@ -44,6 +45,25 @@ let registryPath: string;
 let sessionIdPath: string;
 let heartbeatPath: string;
 let agentsBefore: Set<number>;
+let controlSocket: Server | null = null;
+
+/**
+ * A daemon that confirms a kill.
+ *
+ * Without one, `terminateSession` finds no socket and reports failure — and the
+ * supervisor is *supposed* to speak up in that case, so every restart looked
+ * noisy no matter what the code did. The quiet path only exists when the old
+ * session actually goes away.
+ */
+async function serveControlSocket(response: Record<string, unknown> = { ok: true }): Promise<void> {
+  const dir = join(workDir, "sockets", "d1");
+  await mkdir(dir, { recursive: true });
+  const server = createServer((socket) => {
+    socket.on("data", () => socket.end(`${JSON.stringify(response)}\n`));
+  });
+  controlSocket = server;
+  await new Promise<void>((done) => server.listen(join(dir, "control.sock"), done));
+}
 
 beforeEach(async () => {
   sent.length = 0;
@@ -75,6 +95,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  if (controlSocket) {
+    await new Promise<void>((done) => controlSocket!.close(() => done()));
+    controlSocket = null;
+  }
   for (const agent of await readRegistry()) {
     if (typeof agent.pid === "number") {
       try {
@@ -190,10 +214,11 @@ describe("runOrchestratorSupervisor", () => {
     expect(sent).toEqual([]);
   });
 
-  it("replaces a healthy session that has outlived its context budget", async () => {
+  it("replaces a healthy session that has outlived its context budget silently", async () => {
     // Patrolling normally — only the price of each patrol has gone up. The
     // context measurement needs a transcript the daemon named; with none, the
     // age backstop is what has to fire.
+    await serveControlSocket();
     await seedRegistry([{ sessionId: "aged-1", startedAt: Date.now() - 30 * 3600 * 1000 }]);
     await writeHeartbeat(new Date());
 
@@ -202,6 +227,16 @@ describe("runOrchestratorSupervisor", () => {
     const orchestrators = (await readRegistry()).filter((a) => a.name === "ai-orchestrator");
     expect(orchestrators).toHaveLength(2);
     expect(await recordedSessionId()).not.toBe("aged-1");
+    // 巡回は正常で、入れ替えも成功している。人間に用は無い
+    expect(sent).toEqual([]);
+  });
+
+  it("still says so when the session it aged out would not die", async () => {
+    await seedRegistry([{ sessionId: "aged-3", startedAt: Date.now() - 30 * 3600 * 1000 }]);
+    await writeHeartbeat(new Date());
+
+    await run();
+
     expect(JSON.stringify(sent)).toContain("入れ替え");
   });
 
@@ -349,14 +384,29 @@ describe("runOrchestratorSupervisor --restart", () => {
     expect(recorded).not.toBe("healthy-1");
   });
 
-  it("says why it restarted", async () => {
+  it("says nothing when the replacement went through", async () => {
+    // 指示ファイルの反映は、設計どおりに起きて自分で完結する。人間に手はない。
+    // ここで喋ると1巡回に1通出て、本当に見てほしい1通が沈む。
+    await serveControlSocket();
     await seedRegistry([{ sessionId: "healthy-1" }]);
     await writeHeartbeat(new Date());
 
     await run({ forceRestart: true });
 
-    const titles = sent.map((p) => p.embeds?.[0].title ?? "").join();
-    expect(titles).toContain("指示ファイル反映");
+    expect(sent).toEqual([]);
+    expect(await recordedSessionId()).not.toBe("healthy-1");
+  });
+
+  it("says why it restarted when the old session would not die", async () => {
+    // 二重稼働になりうる。同じイシューを2つのループが取り合う
+    await seedRegistry([{ sessionId: "healthy-1" }]);
+    await writeHeartbeat(new Date());
+
+    await run({ forceRestart: true });
+
+    const text = JSON.stringify(sent);
+    expect(text).toContain("指示ファイル反映");
+    expect(text).toContain("二重に稼働");
   });
 
   it("leaves a healthy session alone without the flag", async () => {
