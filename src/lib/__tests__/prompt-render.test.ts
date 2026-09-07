@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { CORE_DIR, renderChildRules, renderPromptText, renderPrompts } from "../prompt-render.js";
+import {
+  CORE_DIR,
+  relativeCliInvocations,
+  renderChildRules,
+  renderPromptText,
+  renderPrompts,
+} from "../prompt-render.js";
 
 const NAMES = { Todo: "to do", Test: "deploy & test" };
 
@@ -310,5 +316,47 @@ describe("the prompts in this repository", () => {
       const text = readFileSync(join(SOURCE, rel), "utf-8");
       expect(text, `${rel} に絶対パスが残っている`).not.toMatch(/\/home\/[a-z]+\//);
     }
+  });
+});
+
+describe("relativeCliInvocations", () => {
+  it("passes an absolute path", () => {
+    expect(relativeCliInvocations("npx tsx /core/src/cli/send-reminder.ts \"x\"")).toEqual([]);
+  });
+
+  it("catches the placeholder someone forgot to write", () => {
+    // レビューでは正しい行と見分けが付かない。実行して初めて
+    // ERR_MODULE_NOT_FOUND で落ちる
+    expect(relativeCliInvocations("npx tsx src/cli/send-reminder.ts \"x\"")).toEqual([
+      'npx tsx src/cli/send-reminder.ts "x"',
+    ]);
+  });
+
+  it("allows a relative path when the line moved there first", () => {
+    expect(relativeCliInvocations("cd /repo && npx tsx src/index.ts orchestrator-status")).toEqual(
+      [],
+    );
+  });
+
+  it("reports an unrendered placeholder too, since the shell cannot follow it", () => {
+    expect(relativeCliInvocations("npx tsx {{coreDir}}/src/cli/x.ts")).toHaveLength(1);
+  });
+});
+
+describe("the prompts this repository ships", () => {
+  it("invokes every CLI by an absolute path once rendered", async () => {
+    // 実測: core を submodule にした際、`{{coreDir}}` の付け忘れが6行残り、
+    // 人間への一報を送る send-reminder が ERR_MODULE_NOT_FOUND で落ちた。
+    // エージェントの居場所は worktree であって、スクリプトのある場所ではない
+    const out = mkdtempSync(join(tmpdir(), "prompt-guard-"));
+    const written = await renderPrompts("prompts", out, NAMES, "/repo", "/core");
+
+    const offenders = written.flatMap((rel) =>
+      relativeCliInvocations(readFileSync(join(out, rel), "utf-8")).map((line) => `${rel}: ${line}`),
+    );
+
+    expect(offenders).toEqual([]);
+    expect(written.length).toBeGreaterThan(0);
+    rmSync(out, { recursive: true, force: true });
   });
 });

@@ -533,7 +533,7 @@ git -C <worktree> status -sb   # 現在のブランチと未コミットの変�
 
 ```bash
 cd {{coreDir}}
-npx tsx src/cli/rebase-triage.ts --worktree=<worktree の絶対パス> --label=<リポジトリラベル>
+npx tsx {{coreDir}}/src/cli/rebase-triage.ts --worktree=<worktree の絶対パス> --label=<リポジトリラベル>
 ```
 
 出力は3つに分かれます。
@@ -732,8 +732,8 @@ Discord通知でも同じです（下記「通知経路」）。
 **上の3種類は `send-reminder.ts` で送ってください。** あなたが自分のセッションに書いた文章は、人間が端末を見ていない限り届きません。子に投入する指示ファイルにも、この一報を必ず書かせてください（§4.3 の共通ルールに入っています）。
 
 ```bash
-npx tsx src/cli/send-reminder.ts "メッセージ"     # Discord（Slackへフォールバック）
-npx tsx src/cli/personal-comment.ts --id=<ISSUE-ID> --body="コメント本文"
+npx tsx {{coreDir}}/src/cli/send-reminder.ts "メッセージ"     # Discord（Slackへフォールバック）
+npx tsx {{coreDir}}/src/cli/personal-comment.ts --id=<ISSUE-ID> --body="コメント本文"
 ```
 
 Discordには構造的な制約があります。埋め込みは25フィールドまで、フィールド値は1024文字まで、メッセージ全体で6000文字まで、埋め込みは10個まで。長い内容はLinearコメントに書き、通知にはリンクを載せてください。
