@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { needsAttention, buildSweepPayload } from "../container-sweep.js";
 import type { SweepDecision, ComposeProject } from "../../lib/container-sweep.js";
 
+/** A decision to tear one stack down, unless `action` says otherwise. */
 function decision(over: Partial<SweepDecision> = {}): SweepDecision {
   const project: ComposeProject = {
     project: "repo-abcd1234",

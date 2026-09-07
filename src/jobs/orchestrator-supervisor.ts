@@ -396,6 +396,7 @@ export interface SupervisorOptions {
   forceRestart?: boolean;
 }
 
+/** Read the command line. Only `--restart` changes what the supervisor does. */
 export function parseSupervisorArgs(argv: string[]): SupervisorOptions {
   return { forceRestart: argv.includes("--restart") };
 }
@@ -416,6 +417,19 @@ export const REAL_SUPERVISOR_IO: SupervisorIo = {
   checkPrerequisites: () => checkResidencyPrerequisites(),
 };
 
+/**
+ * Keep exactly one resident session alive, and replace it when it stops being
+ * worth keeping.
+ *
+ * Three things end a session: it stalled (present and answering, but no longer
+ * patrolling — which a liveness check alone would call healthy forever), its
+ * context grew past what a patrol should cost, or the instruction file changed
+ * and the old text has to be retired from its context.
+ *
+ * Only the first of those is worth telling anyone about. The other two happen
+ * on schedule and finish on their own, so they pass without a word unless the
+ * old session refused to die, which risks two loops on the same issues.
+ */
 export async function runOrchestratorSupervisor(
   options: SupervisorOptions = {},
   io: SupervisorIo = REAL_SUPERVISOR_IO,

@@ -30,6 +30,12 @@ export interface ContainerSweepArgs extends SweepOptions {
   dryRun: boolean;
 }
 
+/**
+ * Read the command line, falling back to the defaults for anything absent.
+ *
+ * An unknown flag is a typo, and a typo that is ignored silently reads as a
+ * successful run that swept nothing — so it stops here instead.
+ */
 export function parseContainerSweepArgs(argv: string[]): ContainerSweepArgs {
   const args: ContainerSweepArgs = { ...DEFAULT_SWEEP_OPTIONS, dryRun: false };
   for (const arg of argv) {
@@ -52,6 +58,16 @@ export function parseContainerSweepArgs(argv: string[]): ContainerSweepArgs {
   return args;
 }
 
+/**
+ * Read the running stacks, decide each one on its own evidence, and tear down
+ * the ones whose work is finished.
+ *
+ * Nothing here remembers who started a container: the compose label points at
+ * the worktree, so the chain back to a branch and its PR is rebuilt from the
+ * machine's own state every run. That is what lets a stack outlive the session
+ * that created it and still be collected — and why a missed one simply comes
+ * back next run rather than being lost.
+ */
 export async function runContainerSweep(
   args: ContainerSweepArgs = { ...DEFAULT_SWEEP_OPTIONS, dryRun: false },
   now: Date = new Date(),
