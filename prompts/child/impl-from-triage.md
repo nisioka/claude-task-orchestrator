@@ -6,7 +6,7 @@
 
 ```bash
 cd {{coreDir}}
-npx tsx src/cli/personal-issue-detail.ts <ISSUE-ID> --comments=40
+npx tsx {{coreDir}}/src/cli/personal-issue-detail.ts <ISSUE-ID> --comments=40
 ```
 
 最新のトリアージコメントに、**原因・修正方針・影響範囲・走っている他案件との衝突・確かめられていないこと**が書いてあります。**これが正式な方針です。設計をやり直さないでください。** 疑問があれば実装しながら確かめ、結論を報告に書いてください。

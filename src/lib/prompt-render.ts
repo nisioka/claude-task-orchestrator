@@ -110,6 +110,35 @@ export function substitutePaths(text: string, context: RenderContext): string {
     .replaceAll("{{extraSections}}", context.extraSections ?? "");
 }
 
+/** `npx tsx <path>` を拾う。パスは空白まで。 */
+const INVOCATION = /npx tsx (\S+)/g;
+
+/**
+ * Lines that would run a CLI from wherever the agent happens to be standing.
+ *
+ * The prompts are read by an agent whose working directory is a worktree, not
+ * the repository the script lives in, so a bare `npx tsx src/cli/x.ts` resolves
+ * to nothing and dies with `ERR_MODULE_NOT_FOUND`. The placeholders exist to
+ * stop that, and forgetting one is invisible in review: the line reads exactly
+ * like the correct ones.
+ *
+ * `cd` earlier on the same line makes a relative path fine, and that form is in
+ * use, so it is allowed rather than rewritten.
+ *
+ * Run this on **rendered** text. Before rendering, every correct line still
+ * starts with `{{`, and would be reported.
+ */
+export function relativeCliInvocations(text: string): string[] {
+  const offenders: string[] = [];
+  for (const line of text.split("\n")) {
+    if (/(^|[\s(])cd\s/.test(line)) continue;
+    for (const match of line.matchAll(INVOCATION)) {
+      if (!match[1].startsWith("/")) offenders.push(line.trim());
+    }
+  }
+  return offenders;
+}
+
 export function renderPromptText(text: string, context: RenderContext): string {
   return renameStatuses(substitutePaths(text, context), context.names);
 }
