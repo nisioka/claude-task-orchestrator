@@ -209,9 +209,18 @@ export function isHeartbeatStale(
 
 // ─── IO ─────────────────────────────────────────────────────────────
 
-export async function listAgents(
+/**
+ * The agent list, or `null` when it could not be read at all.
+ *
+ * Most callers are reporting on what is running and an unreadable list is
+ * simply nothing to report, which is what `listAgents` gives them. A caller
+ * that concludes something from an *absence* needs the difference: "the daemon
+ * says it is not there" and "the daemon did not answer" look identical once the
+ * failure has been flattened to an empty list.
+ */
+export async function tryListAgents(
   executable: string = DEFAULT_CLAUDE_EXECUTABLE,
-): Promise<AgentSummary[]> {
+): Promise<AgentSummary[] | null> {
   try {
     const { stdout } = await execFileAsync(executable, ["agents", "--json", "--all"], {
       env: buildExecEnv(),
@@ -220,8 +229,14 @@ export async function listAgents(
     return parseAgentList(stdout);
   } catch {
     // A failing daemon must not take the caller down with it.
-    return [];
+    return null;
   }
+}
+
+export async function listAgents(
+  executable: string = DEFAULT_CLAUDE_EXECUTABLE,
+): Promise<AgentSummary[]> {
+  return (await tryListAgents(executable)) ?? [];
 }
 
 export async function readJobState(
@@ -358,9 +373,16 @@ export async function terminateSessionAndWait(
   // Observation is the authority, so look before waiting: a daemon that evicts
   // as it answers is already done, and sleeping first would charge every caller
   // for a session that is gone.
+  //
+  // `tryListAgents`, not `listAgents`: a list that could not be read says
+  // nothing about the session, and the empty list `listAgents` substitutes
+  // would read as "not there" — the exact mistake this function exists to stop.
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (attempt > 0) await new Promise((resume) => setTimeout(resume, intervalMs));
-    const stillLive = (await listAgents(options.executable)).some(
+    const agents = await tryListAgents(options.executable);
+    if (agents === null) continue;
+
+    const stillLive = agents.some(
       (a) => a.sessionId === sessionId && (a.state === null || !isTerminalState(a.state)),
     );
     if (!stillLive) return true;

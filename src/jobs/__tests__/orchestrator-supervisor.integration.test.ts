@@ -64,9 +64,19 @@ async function serveControlSocket(response: Record<string, unknown> = { ok: true
   const dir = join(workDir, "sockets", "d1");
   await mkdir(dir, { recursive: true });
   const server = createServer((socket) => {
+    // Requests are newline-delimited, so buffer until one arrives rather than
+    // assuming a chunk boundary falls there. A split request would parse to
+    // nothing while the socket still answered `ok`, which is a daemon that
+    // confirms a kill it never performed — a flake shaped like the bug.
+    let buffered = "";
     socket.on("data", (chunk) => {
+      buffered += chunk.toString("utf-8");
+      const newline = buffered.indexOf("\n");
+      if (newline === -1) return;
+      const request = buffered.slice(0, newline);
+      buffered = "";
       void (async () => {
-        if (response.ok === true) await evictFromRegistry(chunk.toString("utf-8"));
+        if (response.ok === true) await evictFromRegistry(request);
         socket.end(`${JSON.stringify(response)}\n`);
       })();
     });
@@ -79,7 +89,7 @@ async function serveControlSocket(response: Record<string, unknown> = { ok: true
 async function evictFromRegistry(request: string): Promise<void> {
   let shortId: unknown;
   try {
-    shortId = JSON.parse(request.split("\n")[0] ?? "").short;
+    shortId = JSON.parse(request).short;
   } catch {
     return;
   }

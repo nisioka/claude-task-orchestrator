@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createServer, type Server } from "node:net";
 import {
   terminateSession,
+  terminateSessionAndWait,
   parseAgentList,
   parseJobState,
   classifyRun,
@@ -481,8 +482,18 @@ describe("terminateSession", () => {
     root = null;
   });
 
-  /** Sockets are listed newest first, so `name` decides the order they are tried. */
-  async function serve(name: string, response: Record<string, unknown>): Promise<void> {
+  /**
+   * A daemon that answers `response` and counts what it was asked.
+   *
+   * The count is the point. Every return value here is reachable with an
+   * implementation that stops at the first `ENOJOB`, so asserting the answer
+   * alone would not notice one coming back — only "did the second daemon get
+   * asked at all" separates them.
+   */
+  async function serve(
+    name: string,
+    response: Record<string, unknown>,
+  ): Promise<{ get calls(): number }> {
     if (!root) {
       await mkdir(join(homedir(), ".cache"), { recursive: true });
       root = await mkdtemp(join(homedir(), ".cache", "terminate-"));
@@ -490,25 +501,39 @@ describe("terminateSession", () => {
     }
     const dir = join(root, name);
     await mkdir(dir, { recursive: true });
+    let calls = 0;
     const server = createServer((socket) => {
-      socket.on("data", () => socket.end(`${JSON.stringify(response)}\n`));
+      socket.on("data", () => {
+        calls += 1;
+        socket.end(`${JSON.stringify(response)}\n`);
+      });
     });
     servers.push(server);
     await new Promise<void>((done) => server.listen(join(dir, "control.sock"), done));
+    return {
+      get calls() {
+        return calls;
+      },
+    };
   }
 
   it("keeps asking after a daemon disclaims the job", async () => {
-    await serve("a", { ok: false, code: "ENOJOB" });
-    await serve("b", { ok: true });
+    // 後に作ったほうが新しく、走査は新しい順。先に ENOJOB を引かせる
+    const owner = await serve("owner", { ok: true });
+    const disclaimer = await serve("disclaimer", { ok: false, code: "ENOJOB" });
 
     expect(await terminateSession("short-1")).toBe(true);
+    expect(disclaimer.calls).toBe(1);
+    expect(owner.calls).toBe(1);
   });
 
   it("reports success only once every daemon has disclaimed it", async () => {
-    await serve("a", { ok: false, code: "ENOJOB" });
-    await serve("b", { ok: false, code: "ENOJOB" });
+    const first = await serve("a", { ok: false, code: "ENOJOB" });
+    const second = await serve("b", { ok: false, code: "ENOJOB" });
 
     expect(await terminateSession("short-1")).toBe(true);
+    expect(first.calls).toBe(1);
+    expect(second.calls).toBe(1);
   });
 
   it("reports failure when a daemon refuses for any other reason", async () => {
@@ -525,5 +550,19 @@ describe("terminateSession", () => {
 
     // No answer at all is not "nothing left to stop".
     expect(await terminateSession("short-1")).toBe(false);
+  });
+
+  it("does not call a session terminated when the list could not be read", async () => {
+    await serve("only", { ok: true });
+
+    // 一覧が引けないのは「居ない」ではない。空の一覧に均すと、デーモンが答え
+    // なかった回が不在に見え、旧セッションを残したまま後継が起動する
+    const gone = await terminateSessionAndWait("short-1", "session-1", {
+      executable: "/nonexistent/claude",
+      attempts: 2,
+      intervalMs: 1,
+    });
+
+    expect(gone).toBe(false);
   });
 });
