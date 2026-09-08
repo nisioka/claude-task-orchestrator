@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { createServer, type Server } from "node:net";
 import {
+  terminateSession,
   parseAgentList,
   parseJobState,
   classifyRun,
@@ -452,5 +457,73 @@ describe("isHeartbeatStale", () => {
 
   it("is not stale for a record from the future — clock skew is not a stall", () => {
     expect(isHeartbeatStale(at("2026-08-06T01:05:00.000Z"), now, MAX)).toBe(false);
+  });
+});
+
+// ─── terminateSession ───────────────────────────────────────────────
+
+/**
+ * The multi-daemon case is the whole reason this function loops.
+ *
+ * `ENOJOB` is one daemon saying it does not have the job — not that the job is
+ * gone. Answering on the first such reply reports a kill against a daemon that
+ * was never asked, and the session it belongs to keeps running.
+ */
+describe("terminateSession", () => {
+  const servers: Server[] = [];
+  let root: string | null = null;
+
+  afterEach(async () => {
+    await Promise.all(servers.map((s) => new Promise<void>((done) => s.close(() => done()))));
+    servers.length = 0;
+    vi.unstubAllEnvs();
+    if (root) await rm(root, { recursive: true, force: true });
+    root = null;
+  });
+
+  /** Sockets are listed newest first, so `name` decides the order they are tried. */
+  async function serve(name: string, response: Record<string, unknown>): Promise<void> {
+    if (!root) {
+      await mkdir(join(homedir(), ".cache"), { recursive: true });
+      root = await mkdtemp(join(homedir(), ".cache", "terminate-"));
+      vi.stubEnv("ORCHESTRATOR_DAEMON_SOCK_DIR", root);
+    }
+    const dir = join(root, name);
+    await mkdir(dir, { recursive: true });
+    const server = createServer((socket) => {
+      socket.on("data", () => socket.end(`${JSON.stringify(response)}\n`));
+    });
+    servers.push(server);
+    await new Promise<void>((done) => server.listen(join(dir, "control.sock"), done));
+  }
+
+  it("keeps asking after a daemon disclaims the job", async () => {
+    await serve("a", { ok: false, code: "ENOJOB" });
+    await serve("b", { ok: true });
+
+    expect(await terminateSession("short-1")).toBe(true);
+  });
+
+  it("reports success only once every daemon has disclaimed it", async () => {
+    await serve("a", { ok: false, code: "ENOJOB" });
+    await serve("b", { ok: false, code: "ENOJOB" });
+
+    expect(await terminateSession("short-1")).toBe(true);
+  });
+
+  it("reports failure when a daemon refuses for any other reason", async () => {
+    await serve("a", { ok: false, code: "ENOJOB" });
+    await serve("b", { ok: false, code: "EBUSY" });
+
+    expect(await terminateSession("short-1")).toBe(false);
+  });
+
+  it("reports failure when there is no daemon to ask", async () => {
+    await mkdir(join(homedir(), ".cache"), { recursive: true });
+    root = await mkdtemp(join(homedir(), ".cache", "terminate-"));
+    vi.stubEnv("ORCHESTRATOR_DAEMON_SOCK_DIR", root);
+
+    // No answer at all is not "nothing left to stop".
+    expect(await terminateSession("short-1")).toBe(false);
   });
 });

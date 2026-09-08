@@ -48,21 +48,44 @@ let agentsBefore: Set<number>;
 let controlSocket: Server | null = null;
 
 /**
- * A daemon that confirms a kill.
+ * A daemon that confirms a kill, and evicts the session it confirmed.
  *
  * Without one, `terminateSession` finds no socket and reports failure — and the
  * supervisor is *supposed* to speak up in that case, so every restart looked
  * noisy no matter what the code did. The quiet path only exists when the old
  * session actually goes away.
+ *
+ * Evicting matters as much as answering. The supervisor no longer trusts the
+ * acknowledgement — it waits for the session to leave the agent list — so a
+ * daemon that says `ok` and keeps the entry is a daemon whose kill did not
+ * take, which is the very failure being modelled elsewhere in this file.
  */
 async function serveControlSocket(response: Record<string, unknown> = { ok: true }): Promise<void> {
   const dir = join(workDir, "sockets", "d1");
   await mkdir(dir, { recursive: true });
   const server = createServer((socket) => {
-    socket.on("data", () => socket.end(`${JSON.stringify(response)}\n`));
+    socket.on("data", (chunk) => {
+      void (async () => {
+        if (response.ok === true) await evictFromRegistry(chunk.toString("utf-8"));
+        socket.end(`${JSON.stringify(response)}\n`);
+      })();
+    });
   });
   controlSocket = server;
   await new Promise<void>((done) => server.listen(join(dir, "control.sock"), done));
+}
+
+/** Drop the session a kill request names, the way an evicting daemon would. */
+async function evictFromRegistry(request: string): Promise<void> {
+  let shortId: unknown;
+  try {
+    shortId = JSON.parse(request.split("\n")[0] ?? "").short;
+  } catch {
+    return;
+  }
+  if (typeof shortId !== "string") return;
+  const remaining = (await readRegistry()).filter((a) => a.id !== shortId);
+  await writeFile(registryPath, JSON.stringify(remaining), "utf-8");
 }
 
 beforeEach(async () => {
@@ -235,8 +258,12 @@ describe("runOrchestratorSupervisor", () => {
 
     await run();
 
+    // 置き換わったこと、そして**旧が残っていないこと**。以前はここが2件で通って
+    // いたが、それは偽デーモンが kill を認めるだけで退去させなかったからで、
+    // 実機なら二重稼働そのものの形をしている
     const orchestrators = (await readRegistry()).filter((a) => a.name === "ai-orchestrator");
-    expect(orchestrators).toHaveLength(2);
+    expect(orchestrators.map((a) => a.sessionId)).not.toContain("aged-1");
+    expect(orchestrators).toHaveLength(1);
     expect(await recordedSessionId()).not.toBe("aged-1");
     // 巡回は正常で、入れ替えも成功している。人間に用は無い
     expect(sent).toEqual([]);
@@ -312,13 +339,57 @@ describe("runOrchestratorSupervisor", () => {
     expect((await readRegistry()).filter((a) => a.state === "working")).toHaveLength(1);
   });
 
-  it("warns when more than one session is running under our name", async () => {
-    await seedRegistry([{ sessionId: "dup-1" }, { sessionId: "dup-2" }]);
+  it("terminates the stranded older session and says nothing", async () => {
+    // 二重稼働はかつて通知するだけで放置されていた。live は新しい順なので、
+    // 以後の分岐は全て最新側に当たり、取り残された古いほうは二度と終了対象に
+    // ならない。上限を超えたセッションが延々巡回し続けることになる
+    await serveControlSocket();
+    await seedRegistry([
+      { sessionId: "dup-old", startedAt: Date.now() - 7_200_000 },
+      { sessionId: "dup-new", startedAt: Date.now() - 600_000 },
+    ]);
     await writeHeartbeat(new Date());
 
     await run();
 
-    expect(sent.map((p) => p.embeds?.[0].title ?? "").join()).toContain("二重");
+    const alive = (await readRegistry()).map((a) => a.sessionId);
+    expect(alive).toEqual(["dup-new"]);
+    // 自力で収束したので人間に用は無い
+    expect(sent).toEqual([]);
+  });
+
+  it("reports the duplicate it could not terminate", async () => {
+    // ソケットを立てない。終了要求の宛先が無いので旧は残る
+    await seedRegistry([
+      { sessionId: "dup-old", startedAt: Date.now() - 7_200_000 },
+      { sessionId: "dup-new", startedAt: Date.now() - 600_000 },
+    ]);
+    await writeHeartbeat(new Date());
+
+    await run();
+
+    const text = JSON.stringify(sent);
+    expect(text).toContain("二重稼働を解消できませんでした");
+    expect(text).toContain("dup-old");
+    expect(text).not.toContain("dup-new");
+    expect((await readRegistry()).map((a) => a.sessionId)).toContain("dup-old");
+  });
+
+  it("does not terminate a duplicate it cannot prove is older", async () => {
+    // 同着。落とす側を決められないまま殺すと、生きているほうを落としうる。
+    // 終了できるデーモンが居ても手を出さないことを確かめる
+    await serveControlSocket();
+    const startedAt = Date.now() - 3_600_000;
+    await seedRegistry([
+      { sessionId: "tie-a", startedAt },
+      { sessionId: "tie-b", startedAt },
+    ]);
+    await writeHeartbeat(new Date());
+
+    await run();
+
+    expect((await readRegistry()).map((a) => a.sessionId).sort()).toEqual(["tie-a", "tie-b"]);
+    expect(JSON.stringify(sent)).toContain("二重稼働を解消できませんでした");
   });
 
   it("fails loudly when the instruction file is missing", async () => {
