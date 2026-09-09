@@ -1,7 +1,6 @@
 import { loadCoreConfig } from "../lib/core-config.js";
 import { loadOrchestratorConfig, ORCHESTRATOR_SESSION_NAME, parseAgentName } from "../lib/orchestrator-config.js";
 import {
-  classifyRun,
   isRunningAgent,
   listDaemonJobs,
   isHeartbeatStale,
@@ -341,11 +340,10 @@ export async function runOrchestratorStatus(): Promise<void> {
   const children = agents.filter((a) => {
     const parsed = parseAgentName(a.name);
     if (!parsed || parsed.role === "orchestrator") return false;
-    // Listed by definition here, so this separates running from finished — and
-    // `isRunningAgent` drops the rows that only *claim* to be running, which is
-    // what a child killed while `blocked` looks like ever after.
-    return classifyRun({ listed: true, jobState: a.state }) === "running" &&
-      isRunningAgent(a, heldByDaemon);
+    // `isRunningAgent` is the single test: it rejects terminal states, and then
+    // the rows that only *claim* to be running — which is what a child killed
+    // while `blocked` looks like ever after.
+    return isRunningAgent(a, heldByDaemon);
   });
 
   const childStates = await Promise.all(

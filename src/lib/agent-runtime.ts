@@ -302,7 +302,14 @@ export async function findControlSockets(uid: number = process.getuid?.() ?? 0):
   }
 }
 
-/** Send one request over a control socket. Returns `null` on any failure. */
+/**
+ * Send one request over a control socket. Returns `null` on any failure.
+ *
+ * Responses are newline-delimited and can be large — a job listing carries a
+ * record per job — so the reply is buffered until a newline arrives rather than
+ * parsed from whichever chunk lands first. A split reply would parse to nothing
+ * and read as "this daemon did not answer".
+ */
 export async function sendControlRequest(
   socketPath: string,
   request: Record<string, unknown>,
@@ -323,8 +330,12 @@ export async function sendControlRequest(
     socket.setTimeout(timeoutMs, () => finish(null));
     socket.on("error", () => finish(null));
     socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
+    let buffered = "";
     socket.on("data", (chunk) => {
-      const parsed = safeJsonParse(chunk.toString("utf-8").split("\n")[0]);
+      buffered += chunk.toString("utf-8");
+      const newline = buffered.indexOf("\n");
+      if (newline === -1) return;
+      const parsed = safeJsonParse(buffered.slice(0, newline));
       finish(isRecord(parsed) ? parsed : null);
     });
   });
@@ -348,19 +359,26 @@ export async function listDaemonJobs(): Promise<Set<string> | null> {
   const sockets = await findControlSockets();
   if (sockets.length === 0) return null;
 
+  // Read-only and independent of each other, so ask them at once: a socket that
+  // has stopped answering costs a full timeout, and the callers poll.
+  const responses = await Promise.all(
+    sockets.map((socketPath) => sendControlRequest(socketPath, buildListRequest())),
+  );
+
   const held = new Set<string>();
-  let answered = false;
-  for (const socketPath of sockets) {
-    const response = await sendControlRequest(socketPath, buildListRequest());
-    if (response?.ok !== true || !Array.isArray(response.jobs)) continue;
-    answered = true;
+  for (const response of responses) {
+    // **Every** daemon has to answer. One silent daemon means the jobs it holds
+    // are missing from the set, and a missing job reads as a dead one — which
+    // would drop a running orchestrator from `liveOrchestrators` and start a
+    // second one beside it. A partial answer is not a partial truth here; it is
+    // a wrong one, so it has to look the same as no answer at all.
+    if (response?.ok !== true || !Array.isArray(response.jobs)) return null;
     for (const job of response.jobs) {
       const short = isRecord(job) ? asString(job.short) : null;
       if (short !== null) held.add(short);
     }
   }
-  // Nobody answered is not "nobody is holding anything".
-  return answered ? held : null;
+  return held;
 }
 
 /**

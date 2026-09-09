@@ -646,6 +646,36 @@ describe("listDaemonJobs", () => {
     await new Promise<void>((done) => server.listen(join(dir, "control.sock"), done));
   }
 
+  /**
+   * Splits the reply across two flushes with a real gap between them.
+   *
+   * Consecutive `write` calls coalesce into one segment, so a loop over the
+   * bytes still arrives as a single chunk and proves nothing. The timer is what
+   * forces the client to see a partial reply first.
+   */
+  async function serveChunked(name: string, response: Record<string, unknown>): Promise<void> {
+    if (!root) {
+      await mkdir(join(homedir(), ".cache"), { recursive: true });
+      root = await mkdtemp(join(homedir(), ".cache", "daemon-list-"));
+      vi.stubEnv("ORCHESTRATOR_DAEMON_SOCK_DIR", root);
+    }
+    const dir = join(root, name);
+    await mkdir(dir, { recursive: true });
+    const server = createServer((socket) => {
+      socket.on("data", () => {
+        const reply = `${JSON.stringify(response)}\n`;
+        const cut = Math.floor(reply.length / 2);
+        socket.write(reply.slice(0, cut));
+        setTimeout(() => {
+          socket.write(reply.slice(cut));
+          socket.end();
+        }, 20);
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((done) => server.listen(join(dir, "control.sock"), done));
+  }
+
   it("collects the short ids every daemon is holding", async () => {
     await serve("a", { ok: true, op: "list", jobs: [{ short: "one" }, { short: "two" }] });
     await serve("b", { ok: true, op: "list", jobs: [{ short: "three" }] });
@@ -666,6 +696,23 @@ describe("listDaemonJobs", () => {
     await serve("a", { ok: false, code: "EUNKNOWN" });
 
     expect(await listDaemonJobs()).toBeNull();
+  });
+
+  it("answers null when only some daemons answered", async () => {
+    // 黙ったデーモンが持つジョブは集合に入らず、不在は死と読まれる。
+    // 走っているオーケストレータが live から落ち、その隣に2本目が起動する
+    await serve("answers", { ok: true, op: "list", jobs: [{ short: "one" }] });
+    await serve("silent", { ok: false, code: "EUNKNOWN" });
+
+    expect(await listDaemonJobs()).toBeNull();
+  });
+
+  it("reads a reply that arrives in pieces", async () => {
+    // 応答は改行区切りで、ジョブ一覧はジョブごとにレコードを持つ。最初のチャンクだけ
+    // を解析すると、分割された応答は「答えなかった」と同じ顔になる
+    await serveChunked("split", { ok: true, op: "list", jobs: [{ short: "one" }, { short: "two" }] });
+
+    expect(await listDaemonJobs()).toEqual(new Set(["one", "two"]));
   });
 
   it("reports an empty set when a daemon answered and is holding nothing", async () => {
