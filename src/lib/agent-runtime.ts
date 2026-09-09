@@ -273,6 +273,11 @@ export function buildKillRequest(shortId: string): Record<string, unknown> {
   return { proto: 1, op: "kill", short: shortId, evict: true };
 }
 
+/** Read-only: the jobs a daemon is holding. */
+export function buildListRequest(): Record<string, unknown> {
+  return { proto: 1, op: "list" };
+}
+
 /** The daemon's socket directory. Overridable so tests never reach a real daemon. */
 export function controlSocketRoot(uid: number = process.getuid?.() ?? 0): string {
   return process.env.ORCHESTRATOR_DAEMON_SOCK_DIR || join("/tmp", `cc-daemon-${uid}`);
@@ -297,7 +302,14 @@ export async function findControlSockets(uid: number = process.getuid?.() ?? 0):
   }
 }
 
-/** Send one request over a control socket. Returns `null` on any failure. */
+/**
+ * Send one request over a control socket. Returns `null` on any failure.
+ *
+ * Responses are newline-delimited and can be large — a job listing carries a
+ * record per job — so the reply is buffered until a newline arrives rather than
+ * parsed from whichever chunk lands first. A split reply would parse to nothing
+ * and read as "this daemon did not answer".
+ */
 export async function sendControlRequest(
   socketPath: string,
   request: Record<string, unknown>,
@@ -318,11 +330,70 @@ export async function sendControlRequest(
     socket.setTimeout(timeoutMs, () => finish(null));
     socket.on("error", () => finish(null));
     socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
+    let buffered = "";
     socket.on("data", (chunk) => {
-      const parsed = safeJsonParse(chunk.toString("utf-8").split("\n")[0]);
+      buffered += chunk.toString("utf-8");
+      const newline = buffered.indexOf("\n");
+      if (newline === -1) return;
+      const parsed = safeJsonParse(buffered.slice(0, newline));
       finish(isRecord(parsed) ? parsed : null);
     });
   });
+}
+
+/**
+ * The short ids the daemons are holding, or `null` when none of them answered.
+ *
+ * The daemon owns the processes, so **a job it is not holding is not running**,
+ * whatever that job's own state file still says. The state file records what
+ * the session last wrote about itself, and a session that dies without writing
+ * a terminal state — killed, crashed, or orphaned by a daemon restart — keeps
+ * claiming the state it was in. `blocked` is the worst of these: it is a state
+ * a session can legitimately sit in for days, so nothing about its age looks
+ * wrong, and it never updates by definition.
+ *
+ * The converse does not hold. A finished job stays in the daemon's list for a
+ * while, so being held proves nothing — only absence is evidence.
+ */
+export async function listDaemonJobs(): Promise<Set<string> | null> {
+  const sockets = await findControlSockets();
+  if (sockets.length === 0) return null;
+
+  // Read-only and independent of each other, so ask them at once: a socket that
+  // has stopped answering costs a full timeout, and the callers poll.
+  const responses = await Promise.all(
+    sockets.map((socketPath) => sendControlRequest(socketPath, buildListRequest())),
+  );
+
+  const held = new Set<string>();
+  for (const response of responses) {
+    // **Every** daemon has to answer. One silent daemon means the jobs it holds
+    // are missing from the set, and a missing job reads as a dead one — which
+    // would drop a running orchestrator from `liveOrchestrators` and start a
+    // second one beside it. A partial answer is not a partial truth here; it is
+    // a wrong one, so it has to look the same as no answer at all.
+    if (response?.ok !== true || !Array.isArray(response.jobs)) return null;
+    for (const job of response.jobs) {
+      const short = isRecord(job) ? asString(job.short) : null;
+      if (short !== null) held.add(short);
+    }
+  }
+  return held;
+}
+
+/**
+ * Whether a listed agent is actually running.
+ *
+ * `heldByDaemon` is what `listDaemonJobs` returned; `null` means the question
+ * could not be asked, and an unanswerable question decides nothing — the agent
+ * keeps whatever its own state claims.
+ */
+export function isRunningAgent(agent: AgentSummary, heldByDaemon: Set<string> | null): boolean {
+  if (agent.state !== null && isTerminalState(agent.state)) return false;
+  // Interactive sessions carry no short id and are not daemon jobs, so their
+  // absence from the list says nothing about them.
+  if (heldByDaemon === null || agent.id === null) return true;
+  return heldByDaemon.has(agent.id);
 }
 
 /**
@@ -379,6 +450,13 @@ export async function terminateSessionAndWait(
   // would read as "not there" — the exact mistake this function exists to stop.
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (attempt > 0) await new Promise((resume) => setTimeout(resume, intervalMs));
+
+    // The daemon settles it first: a job it does not hold is not running, and
+    // waiting for the agent list to agree would never end for a session that
+    // died without writing a terminal state.
+    const held = await listDaemonJobs();
+    if (held !== null && !held.has(shortId)) return true;
+
     const agents = await tryListAgents(options.executable);
     if (agents === null) continue;
 

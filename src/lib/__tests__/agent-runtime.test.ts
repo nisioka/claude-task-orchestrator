@@ -6,6 +6,8 @@ import { createServer, type Server } from "node:net";
 import {
   terminateSession,
   terminateSessionAndWait,
+  isRunningAgent,
+  listDaemonJobs,
   parseAgentList,
   parseJobState,
   classifyRun,
@@ -564,5 +566,158 @@ describe("terminateSession", () => {
     });
 
     expect(gone).toBe(false);
+  });
+});
+
+// ─── isRunningAgent ─────────────────────────────────────────────────
+
+/**
+ * A job's own state file records what the session last wrote about itself, so
+ * a session that dies without writing a terminal state keeps claiming the state
+ * it was in. `blocked` is the worst case: a session can legitimately sit there
+ * for days, and it never updates by definition, so nothing about the row looks
+ * wrong. The daemon owns the processes, and it is the only witness that can
+ * tell the two apart.
+ */
+describe("isRunningAgent", () => {
+  const agent = (overrides: Partial<AgentSummary>): AgentSummary => ({
+    pid: null,
+    id: "short",
+    cwd: "/repo",
+    kind: "background",
+    startedAt: 1000,
+    sessionId: "s",
+    name: "ai-impl-TASK-1",
+    status: null,
+    state: "working",
+    ...overrides,
+  });
+
+  it("is not running once it reached a terminal state", () => {
+    expect(isRunningAgent(agent({ state: "done" }), new Set(["short"]))).toBe(false);
+  });
+
+  it("is running when the daemon holds it", () => {
+    expect(isRunningAgent(agent({}), new Set(["short"]))).toBe(true);
+  });
+
+  it("is not running when the daemon does not hold it, whatever the state says", () => {
+    // blocked のまま死んだ子。state ファイルは永久に blocked を主張し続ける
+    expect(isRunningAgent(agent({ state: "blocked" }), new Set(["other"]))).toBe(false);
+  });
+
+  it("keeps the state's word when no daemon could be asked", () => {
+    // 聞けなかった質問は何も決めない
+    expect(isRunningAgent(agent({ state: "blocked" }), null)).toBe(true);
+  });
+
+  it("keeps the state's word for a session with no short id", () => {
+    // 対話セッションはデーモンのジョブではないので、不在は証拠にならない
+    expect(isRunningAgent(agent({ id: null }), new Set(["other"]))).toBe(true);
+  });
+});
+
+// ─── listDaemonJobs ─────────────────────────────────────────────────
+
+describe("listDaemonJobs", () => {
+  const servers: Server[] = [];
+  let root: string | null = null;
+
+  afterEach(async () => {
+    await Promise.all(servers.map((s) => new Promise<void>((done) => s.close(() => done()))));
+    servers.length = 0;
+    vi.unstubAllEnvs();
+    if (root) await rm(root, { recursive: true, force: true });
+    root = null;
+  });
+
+  async function serve(name: string, response: Record<string, unknown>): Promise<void> {
+    if (!root) {
+      await mkdir(join(homedir(), ".cache"), { recursive: true });
+      root = await mkdtemp(join(homedir(), ".cache", "daemon-list-"));
+      vi.stubEnv("ORCHESTRATOR_DAEMON_SOCK_DIR", root);
+    }
+    const dir = join(root, name);
+    await mkdir(dir, { recursive: true });
+    const server = createServer((socket) => {
+      socket.on("data", () => socket.end(`${JSON.stringify(response)}\n`));
+    });
+    servers.push(server);
+    await new Promise<void>((done) => server.listen(join(dir, "control.sock"), done));
+  }
+
+  /**
+   * Splits the reply across two flushes with a real gap between them.
+   *
+   * Consecutive `write` calls coalesce into one segment, so a loop over the
+   * bytes still arrives as a single chunk and proves nothing. The timer is what
+   * forces the client to see a partial reply first.
+   */
+  async function serveChunked(name: string, response: Record<string, unknown>): Promise<void> {
+    if (!root) {
+      await mkdir(join(homedir(), ".cache"), { recursive: true });
+      root = await mkdtemp(join(homedir(), ".cache", "daemon-list-"));
+      vi.stubEnv("ORCHESTRATOR_DAEMON_SOCK_DIR", root);
+    }
+    const dir = join(root, name);
+    await mkdir(dir, { recursive: true });
+    const server = createServer((socket) => {
+      socket.on("data", () => {
+        const reply = `${JSON.stringify(response)}\n`;
+        const cut = Math.floor(reply.length / 2);
+        socket.write(reply.slice(0, cut));
+        setTimeout(() => {
+          socket.write(reply.slice(cut));
+          socket.end();
+        }, 20);
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((done) => server.listen(join(dir, "control.sock"), done));
+  }
+
+  it("collects the short ids every daemon is holding", async () => {
+    await serve("a", { ok: true, op: "list", jobs: [{ short: "one" }, { short: "two" }] });
+    await serve("b", { ok: true, op: "list", jobs: [{ short: "three" }] });
+
+    expect(await listDaemonJobs()).toEqual(new Set(["one", "two", "three"]));
+  });
+
+  it("answers null when there is no daemon to ask", async () => {
+    await mkdir(join(homedir(), ".cache"), { recursive: true });
+    root = await mkdtemp(join(homedir(), ".cache", "daemon-list-"));
+    vi.stubEnv("ORCHESTRATOR_DAEMON_SOCK_DIR", root);
+
+    expect(await listDaemonJobs()).toBeNull();
+  });
+
+  it("answers null when nobody answered, rather than an empty set", async () => {
+    // 空集合は「誰も何も持っていない」を意味してしまい、全員を死んだことにする
+    await serve("a", { ok: false, code: "EUNKNOWN" });
+
+    expect(await listDaemonJobs()).toBeNull();
+  });
+
+  it("answers null when only some daemons answered", async () => {
+    // 黙ったデーモンが持つジョブは集合に入らず、不在は死と読まれる。
+    // 走っているオーケストレータが live から落ち、その隣に2本目が起動する
+    await serve("answers", { ok: true, op: "list", jobs: [{ short: "one" }] });
+    await serve("silent", { ok: false, code: "EUNKNOWN" });
+
+    expect(await listDaemonJobs()).toBeNull();
+  });
+
+  it("reads a reply that arrives in pieces", async () => {
+    // 応答は改行区切りで、ジョブ一覧はジョブごとにレコードを持つ。最初のチャンクだけ
+    // を解析すると、分割された応答は「答えなかった」と同じ顔になる
+    await serveChunked("split", { ok: true, op: "list", jobs: [{ short: "one" }, { short: "two" }] });
+
+    expect(await listDaemonJobs()).toEqual(new Set(["one", "two"]));
+  });
+
+  it("reports an empty set when a daemon answered and is holding nothing", async () => {
+    await serve("a", { ok: true, op: "list", jobs: [] });
+
+    expect(await listDaemonJobs()).toEqual(new Set());
   });
 });
