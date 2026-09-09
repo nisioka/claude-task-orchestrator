@@ -160,6 +160,26 @@ describe("liveOrchestrators", () => {
     expect(liveOrchestrators([agent({ state: null })])).toHaveLength(1);
   });
 
+  it("drops a session the daemon is not holding, whatever its state claims", () => {
+    // blocked のまま死んだセッション。これを live に数えると、行でしかないものを
+    // 相手に二重稼働の警告を毎巡回出し続けることになる
+    const agents = [
+      agent({ sessionId: "alive", id: "s1", state: "working" }),
+      agent({ sessionId: "corpse", id: "s0", state: "blocked" }),
+    ];
+
+    expect(liveOrchestrators(agents, new Set(["s1"])).map((a) => a.sessionId)).toEqual(["alive"]);
+  });
+
+  it("keeps both when no daemon could be asked", () => {
+    const agents = [
+      agent({ sessionId: "a", id: "s1", startedAt: 5000 }),
+      agent({ sessionId: "b", id: "s0", startedAt: 1000 }),
+    ];
+
+    expect(liveOrchestrators(agents, null)).toHaveLength(2);
+  });
+
   it("returns the newest first so duplicates resolve deterministically", () => {
     const agents = [
       agent({ sessionId: "old", startedAt: 1000 }),

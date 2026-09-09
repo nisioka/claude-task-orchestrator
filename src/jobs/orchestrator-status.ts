@@ -2,8 +2,9 @@ import { loadCoreConfig } from "../lib/core-config.js";
 import { loadOrchestratorConfig, ORCHESTRATOR_SESSION_NAME, parseAgentName } from "../lib/orchestrator-config.js";
 import {
   classifyRun,
+  isRunningAgent,
+  listDaemonJobs,
   isHeartbeatStale,
-  isTerminalState,
   listAgents,
   readJobState,
   readLastHeartbeat,
@@ -321,8 +322,10 @@ export async function runOrchestratorStatus(): Promise<void> {
 
   const tasks = createTaskProvider(appConfig);
 
-  const [agents, heartbeat, aiIssues, humanIssues, usage] = await Promise.all([
+  const [agents, heldByDaemon, heartbeat, aiIssues, humanIssues, usage] = await Promise.all([
     listAgents(config.claudeExecutable),
+    // 生きているかはデーモンに聞く。state ファイルは子が最後に書いた値でしかない
+    listDaemonJobs(),
     readLastHeartbeat(config.heartbeatPath),
     // AIのボールは担当者だけで決まる。ステータスでは絞らず、Backlog と終了系だけを型で外す
     tasks.list({ assignee: "ai", excludeStatuses: offTheQueueStatuses(workflow), withDescription: true }),
@@ -332,15 +335,17 @@ export async function runOrchestratorStatus(): Promise<void> {
   ]);
 
   const orchestrator =
-    agents.find(
-      (a) => a.name === ORCHESTRATOR_SESSION_NAME && (a.state === null || !isTerminalState(a.state)),
-    ) ?? null;
+    agents.find((a) => a.name === ORCHESTRATOR_SESSION_NAME && isRunningAgent(a, heldByDaemon)) ??
+    null;
 
   const children = agents.filter((a) => {
     const parsed = parseAgentName(a.name);
     if (!parsed || parsed.role === "orchestrator") return false;
-    // Listed by definition here, so this separates running from finished.
-    return classifyRun({ listed: true, jobState: a.state }) === "running";
+    // Listed by definition here, so this separates running from finished — and
+    // `isRunningAgent` drops the rows that only *claim* to be running, which is
+    // what a child killed while `blocked` looks like ever after.
+    return classifyRun({ listed: true, jobState: a.state }) === "running" &&
+      isRunningAgent(a, heldByDaemon);
   });
 
   const childStates = await Promise.all(

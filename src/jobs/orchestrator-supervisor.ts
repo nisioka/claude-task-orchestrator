@@ -12,7 +12,9 @@ import {
 } from "../lib/orchestrator-config.js";
 import {
   isHeartbeatStale,
+  isRunningAgent,
   isTerminalState,
+  listDaemonJobs,
   launchBackgroundAgent,
   listAgents,
   readJobState,
@@ -468,12 +470,20 @@ export async function runOrchestratorSupervisor(
     throw notified(new Error(message));
   }
 
-  const agents = await listAgents(config.claudeExecutable);
+  const [agents, heldByDaemon] = await Promise.all([
+    listAgents(config.claudeExecutable),
+    listDaemonJobs(),
+  ]);
   // Layers 2 and 4 of the double-launch guard. `liveOrchestrators` matches our
   // name exactly — a partial match would depend on the wording of the launch
   // prompt — so an unrecorded session under that name is adopted rather than
   // duplicated, and anything left over is terminated rather than announced.
-  const live = await reconcileDuplicates(liveOrchestrators(agents), config, notify, terminate);
+  const live = await reconcileDuplicates(
+    liveOrchestrators(agents, heldByDaemon),
+    config,
+    notify,
+    terminate,
+  );
 
   const current = live[0] ?? null;
   const now = new Date();
@@ -634,14 +644,28 @@ export async function reconcileDuplicates(
 
   // Only the ones still standing are worth a human's attention.
   await notify(buildDuplicatePayload(stranded.map((a) => a.sessionId)));
-  return liveOrchestrators(await listAgents(config.claudeExecutable));
+  const [agents, heldByDaemon] = await Promise.all([
+    listAgents(config.claudeExecutable),
+    listDaemonJobs(),
+  ]);
+  return liveOrchestrators(agents, heldByDaemon);
 }
 
-/** Sessions under our exact name that have not reached a terminal state. */
-export function liveOrchestrators(agents: AgentSummary[]): AgentSummary[] {
+/**
+ * Sessions under our exact name that are actually running.
+ *
+ * `heldByDaemon` comes from `listDaemonJobs`. Without it the state file is the
+ * only witness, and a session that died without writing a terminal state keeps
+ * claiming it is alive — which here would mean warning about a duplicate that
+ * is a row rather than a process, every tick, forever.
+ */
+export function liveOrchestrators(
+  agents: AgentSummary[],
+  heldByDaemon: Set<string> | null = null,
+): AgentSummary[] {
   return agents
     .filter((a) => a.name === ORCHESTRATOR_SESSION_NAME)
-    .filter((a) => a.state === null || !isTerminalState(a.state))
+    .filter((a) => isRunningAgent(a, heldByDaemon))
     .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
 }
 
