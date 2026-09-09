@@ -10,11 +10,13 @@ import {
   buildReloadPayload,
   parseSupervisorArgs,
   liveOrchestrators,
+  reconcileDuplicates,
   assessRecycle,
   buildRecyclePayload,
 } from "../orchestrator-supervisor.js";
 import type { HeartbeatRecord, AgentSummary } from "../../lib/agent-runtime.js";
 import type { OrchestratorConfig } from "../../lib/orchestrator-config.js";
+import type { DiscordPayload } from "../../lib/types.js";
 
 const NOW = new Date("2026-08-06T12:00:00.000Z");
 const MAX_INTERVAL = 1800;
@@ -488,5 +490,112 @@ describe("buildRecyclePayload", () => {
     expect(buildRecyclePayload("sid-9", verdict, false).embeds?.[0].description).toContain(
       "終了できませんでした",
     );
+  });
+});
+
+// ─── reconcileDuplicates ────────────────────────────────────────────
+
+/**
+ * Duplicates used to be announced and left standing, which made them permanent:
+ * every later branch acts on the newest session, so a stranded older one was
+ * never a termination candidate again. These pin the convergence, and the two
+ * cases where evidence runs out and the job must not guess.
+ */
+describe("reconcileDuplicates", () => {
+  const agent = (overrides: Partial<AgentSummary>): AgentSummary => ({
+    pid: null,
+    id: "short",
+    cwd: "/repo",
+    kind: "background",
+    startedAt: 1000,
+    sessionId: "s",
+    name: "ai-orchestrator",
+    status: null,
+    state: "working",
+    ...overrides,
+  });
+
+  // listAgents only runs on the reporting path, and a missing binary makes it
+  // answer with an empty list rather than throwing.
+  const config = { claudeExecutable: "/nonexistent/claude" } as OrchestratorConfig;
+
+  function harness(kill: (a: AgentSummary) => boolean) {
+    const sent: string[] = [];
+    const killed: string[] = [];
+    return {
+      sent,
+      killed,
+      notify: async (payload: DiscordPayload) => {
+        sent.push(payload.embeds?.[0].description ?? "");
+      },
+      terminate: async (a: AgentSummary) => {
+        killed.push(a.sessionId);
+        return kill(a);
+      },
+    };
+  }
+
+  it("leaves a single session alone", async () => {
+    const h = harness(() => true);
+    const live = [agent({ sessionId: "only" })];
+
+    expect(await reconcileDuplicates(live, config, h.notify, h.terminate)).toEqual(live);
+    expect(h.killed).toEqual([]);
+    expect(h.sent).toEqual([]);
+  });
+
+  it("terminates the older session and keeps the newest, saying nothing", async () => {
+    const h = harness(() => true);
+    const live = [
+      agent({ sessionId: "new", id: "s1", startedAt: 5000 }),
+      agent({ sessionId: "old", id: "s0", startedAt: 1000 }),
+    ];
+
+    const remaining = await reconcileDuplicates(live, config, h.notify, h.terminate);
+
+    expect(h.killed).toEqual(["old"]);
+    expect(remaining.map((a) => a.sessionId)).toEqual(["new"]);
+    // 自力で収束したので人間に用は無い
+    expect(h.sent).toEqual([]);
+  });
+
+  it("reports the ones that would not die", async () => {
+    const h = harness(() => false);
+    const live = [
+      agent({ sessionId: "new", id: "s1", startedAt: 5000 }),
+      agent({ sessionId: "old", id: "s0", startedAt: 1000 }),
+    ];
+
+    await reconcileDuplicates(live, config, h.notify, h.terminate);
+
+    expect(h.killed).toEqual(["old"]);
+    expect(h.sent.join()).toContain("old");
+  });
+
+  it("does not terminate a session it cannot prove is older", async () => {
+    const h = harness(() => true);
+    // 同着。どちらが後継か決められないものを殺すと、生きているほうを落としうる
+    const live = [
+      agent({ sessionId: "a", id: "s1", startedAt: 1000 }),
+      agent({ sessionId: "b", id: "s0", startedAt: 1000 }),
+    ];
+
+    await reconcileDuplicates(live, config, h.notify, h.terminate);
+
+    expect(h.killed).toEqual([]);
+    expect(h.sent.join()).toContain("b");
+  });
+
+  it("does not terminate a session with no id to address", async () => {
+    const h = harness(() => true);
+    const live = [
+      agent({ sessionId: "new", id: "s1", startedAt: 5000 }),
+      agent({ sessionId: "old", id: null, startedAt: 1000 }),
+    ];
+
+    await reconcileDuplicates(live, config, h.notify, h.terminate);
+
+    expect(h.killed).toEqual([]);
+    expect(h.sent.join()).toContain("old");
   });
 });

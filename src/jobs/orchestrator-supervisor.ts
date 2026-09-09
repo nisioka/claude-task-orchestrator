@@ -17,7 +17,7 @@ import {
   listAgents,
   readJobState,
   readLastHeartbeat,
-  terminateSession,
+  terminateSessionAndWait,
   type AgentSummary,
   type HeartbeatRecord,
 } from "../lib/agent-runtime.js";
@@ -365,15 +365,22 @@ export function buildRecyclePayload(
   };
 }
 
+/**
+ * Sent only for the duplicates that survived being terminated.
+ *
+ * The supervisor resolves the ordinary case itself, so a message here means the
+ * state does not settle without a person: two sessions taking the same issues,
+ * and one of them refusing to go.
+ */
 export function buildDuplicatePayload(sessionIds: string[]): DiscordPayload {
   return {
     embeds: [
       {
-        title: "⚠ オーケストレータが二重に稼働しています",
+        title: "⚠ オーケストレータの二重稼働を解消できませんでした",
         description:
-          `${ORCHESTRATOR_SESSION_NAME} が ${sessionIds.length} 個稼働しています。` +
-          "同じイシューを取り合う可能性があります。\n" +
-          "`claude agents` で確認してください。\n" +
+          `${ORCHESTRATOR_SESSION_NAME} の余分なセッション ${sessionIds.length} 個を` +
+          "終了できませんでした。同じイシューを取り合う可能性があります。\n" +
+          "`claude agents` で確認して、手で終了してください。\n" +
           sessionIds.map((id) => `\`${id}\``).join("\n"),
         color: 0xffa000,
       },
@@ -437,6 +444,12 @@ export async function runOrchestratorSupervisor(
   const appConfig = loadCoreConfig();
   const config = loadOrchestratorConfig();
   const notify = (payload: DiscordPayload) => sendNotifications(appConfig, payload);
+  const terminate = (session: AgentSummary) =>
+    session.id === null
+      ? Promise.resolve(false)
+      : terminateSessionAndWait(session.id, session.sessionId, {
+          executable: config.claudeExecutable,
+        });
 
   // Render before the check below: the instruction file the session reads is an
   // output of this step, not something kept in the repository.
@@ -456,14 +469,11 @@ export async function runOrchestratorSupervisor(
   }
 
   const agents = await listAgents(config.claudeExecutable);
-  const live = liveOrchestrators(agents);
-
-  // Layer 2 of the double-launch guard: an unrecorded session under our exact
-  // name is adopted rather than duplicated. Exact match, because a partial
-  // match would depend on the wording of the launch prompt.
-  if (live.length > 1) {
-    await notify(buildDuplicatePayload(live.map((a) => a.sessionId)));
-  }
+  // Layers 2 and 4 of the double-launch guard. `liveOrchestrators` matches our
+  // name exactly — a partial match would depend on the wording of the launch
+  // prompt — so an unrecorded session under that name is adopted rather than
+  // duplicated, and anything left over is terminated rather than announced.
+  const live = await reconcileDuplicates(liveOrchestrators(agents), config, notify, terminate);
 
   const current = live[0] ?? null;
   const now = new Date();
@@ -505,12 +515,12 @@ export async function runOrchestratorSupervisor(
   if (options.forceRestart && current) {
     // 終了できたなら何も起きていないのと同じ。できなかったときだけ、
     // 二重稼働になりうることを言う。
-    const terminated = current.id ? await terminateSession(current.id) : false;
+    const terminated = await terminate(current);
     if (!terminated) await notify(buildReloadPayload(current.sessionId, terminated));
     announceStart = false;
     reason = "指示ファイル反映のため再起動";
   } else if (verdict.kind === "healthy" && recycle.kind === "recycle" && current) {
-    const terminated = current.id ? await terminateSession(current.id) : false;
+    const terminated = await terminate(current);
     if (!terminated) await notify(buildRecyclePayload(current.sessionId, recycle, terminated));
     announceStart = false;
     reason =
@@ -523,7 +533,7 @@ export async function runOrchestratorSupervisor(
     //
     // 停滞は異常なので必ず言う。ただし言うのはこの1通だけで、この後の起動は
     // 黙る。停滞の報せが「終了させて再起動します」まで含んでいる。
-    const terminated = current.id ? await terminateSession(current.id) : false;
+    const terminated = await terminate(current);
     await notify(buildStalledPayload(verdict.lastHeartbeatAt, terminated));
     announceStart = false;
     reason = "停滞のため再起動";
@@ -571,6 +581,61 @@ export async function runOrchestratorSupervisor(
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
+
+/**
+ * Leave exactly one orchestrator standing, and say so only when that failed.
+ *
+ * Duplicates used to be reported and nothing else, which made them permanent:
+ * `liveOrchestrators` sorts newest first, so every later branch — recycle,
+ * stall, restart — acted on the newest session, and the stranded older one was
+ * never a candidate for termination again. A session that had already blown its
+ * context limit could keep patrolling forever while the supervisor measured the
+ * replacement's context and called the pair healthy.
+ *
+ * So this converges rather than warns, the way `container-sweep` does: read the
+ * state, act on the evidence, and let the next tick pick up whatever did not
+ * settle. The newest survives — it is the one the supervisor launched on
+ * purpose, and the stranded one is typically the exhausted session the swap was
+ * started to retire. Children outlive the session that dispatched them, so
+ * nothing in flight is lost.
+ *
+ * **Only what can be proved older is terminated.** Without a `startedAt` there
+ * is no order, and without an `id` there is nothing to address; either way the
+ * session is left alone and reported rather than guessed at.
+ */
+export async function reconcileDuplicates(
+  live: AgentSummary[],
+  config: OrchestratorConfig,
+  notify: (payload: DiscordPayload) => Promise<void>,
+  terminate: (session: AgentSummary) => Promise<boolean>,
+): Promise<AgentSummary[]> {
+  if (live.length <= 1) return live;
+
+  const [survivor, ...rest] = live as [AgentSummary, ...AgentSummary[]];
+  const provablyOlder = (a: AgentSummary): boolean =>
+    a.id !== null &&
+    a.startedAt !== null &&
+    survivor.startedAt !== null &&
+    a.startedAt < survivor.startedAt;
+
+  const stranded: AgentSummary[] = [];
+  for (const session of rest) {
+    if (!provablyOlder(session) || !(await terminate(session))) stranded.push(session);
+  }
+
+  if (stranded.length === 0) {
+    // Resolved without anyone needing to act, so nothing is sent. The record
+    // goes to stdout, where cron keeps it.
+    console.log(
+      `二重稼働を解消しました: ${rest.length}件を終了し、${survivor.sessionId} を残しました`,
+    );
+    return [survivor];
+  }
+
+  // Only the ones still standing are worth a human's attention.
+  await notify(buildDuplicatePayload(stranded.map((a) => a.sessionId)));
+  return liveOrchestrators(await listAgents(config.claudeExecutable));
+}
 
 /** Sessions under our exact name that have not reached a terminal state. */
 export function liveOrchestrators(agents: AgentSummary[]): AgentSummary[] {

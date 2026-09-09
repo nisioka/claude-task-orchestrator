@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { createServer, type Server } from "node:net";
 import {
+  terminateSession,
+  terminateSessionAndWait,
   parseAgentList,
   parseJobState,
   classifyRun,
@@ -452,5 +458,111 @@ describe("isHeartbeatStale", () => {
 
   it("is not stale for a record from the future — clock skew is not a stall", () => {
     expect(isHeartbeatStale(at("2026-08-06T01:05:00.000Z"), now, MAX)).toBe(false);
+  });
+});
+
+// ─── terminateSession ───────────────────────────────────────────────
+
+/**
+ * The multi-daemon case is the whole reason this function loops.
+ *
+ * `ENOJOB` is one daemon saying it does not have the job — not that the job is
+ * gone. Answering on the first such reply reports a kill against a daemon that
+ * was never asked, and the session it belongs to keeps running.
+ */
+describe("terminateSession", () => {
+  const servers: Server[] = [];
+  let root: string | null = null;
+
+  afterEach(async () => {
+    await Promise.all(servers.map((s) => new Promise<void>((done) => s.close(() => done()))));
+    servers.length = 0;
+    vi.unstubAllEnvs();
+    if (root) await rm(root, { recursive: true, force: true });
+    root = null;
+  });
+
+  /**
+   * A daemon that answers `response` and counts what it was asked.
+   *
+   * The count is the point. Every return value here is reachable with an
+   * implementation that stops at the first `ENOJOB`, so asserting the answer
+   * alone would not notice one coming back — only "did the second daemon get
+   * asked at all" separates them.
+   */
+  async function serve(
+    name: string,
+    response: Record<string, unknown>,
+  ): Promise<{ get calls(): number }> {
+    if (!root) {
+      await mkdir(join(homedir(), ".cache"), { recursive: true });
+      root = await mkdtemp(join(homedir(), ".cache", "terminate-"));
+      vi.stubEnv("ORCHESTRATOR_DAEMON_SOCK_DIR", root);
+    }
+    const dir = join(root, name);
+    await mkdir(dir, { recursive: true });
+    let calls = 0;
+    const server = createServer((socket) => {
+      socket.on("data", () => {
+        calls += 1;
+        socket.end(`${JSON.stringify(response)}\n`);
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((done) => server.listen(join(dir, "control.sock"), done));
+    return {
+      get calls() {
+        return calls;
+      },
+    };
+  }
+
+  it("keeps asking after a daemon disclaims the job", async () => {
+    // 後に作ったほうが新しく、走査は新しい順。先に ENOJOB を引かせる
+    const owner = await serve("owner", { ok: true });
+    const disclaimer = await serve("disclaimer", { ok: false, code: "ENOJOB" });
+
+    expect(await terminateSession("short-1")).toBe(true);
+    expect(disclaimer.calls).toBe(1);
+    expect(owner.calls).toBe(1);
+  });
+
+  it("reports success only once every daemon has disclaimed it", async () => {
+    const first = await serve("a", { ok: false, code: "ENOJOB" });
+    const second = await serve("b", { ok: false, code: "ENOJOB" });
+
+    expect(await terminateSession("short-1")).toBe(true);
+    expect(first.calls).toBe(1);
+    expect(second.calls).toBe(1);
+  });
+
+  it("reports failure when a daemon refuses for any other reason", async () => {
+    await serve("a", { ok: false, code: "ENOJOB" });
+    await serve("b", { ok: false, code: "EBUSY" });
+
+    expect(await terminateSession("short-1")).toBe(false);
+  });
+
+  it("reports failure when there is no daemon to ask", async () => {
+    await mkdir(join(homedir(), ".cache"), { recursive: true });
+    root = await mkdtemp(join(homedir(), ".cache", "terminate-"));
+    vi.stubEnv("ORCHESTRATOR_DAEMON_SOCK_DIR", root);
+
+    // No answer at all is not "nothing left to stop".
+    expect(await terminateSession("short-1")).toBe(false);
+  });
+
+  it("does not call a session terminated when the list could not be read", async () => {
+    await serve("only", { ok: true });
+
+    // 一覧が引けないのは「居ない」ではない。空の一覧に均すと、デーモンが答え
+    // なかった回が不在に見え、旧セッションを残したまま後継が起動する
+    const gone = await terminateSessionAndWait("short-1", "session-1", {
+      executable: "/nonexistent/claude",
+      attempts: 2,
+      intervalMs: 1,
+    });
+
+    expect(gone).toBe(false);
   });
 });

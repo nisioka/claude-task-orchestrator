@@ -209,9 +209,18 @@ export function isHeartbeatStale(
 
 // ─── IO ─────────────────────────────────────────────────────────────
 
-export async function listAgents(
+/**
+ * The agent list, or `null` when it could not be read at all.
+ *
+ * Most callers are reporting on what is running and an unreadable list is
+ * simply nothing to report, which is what `listAgents` gives them. A caller
+ * that concludes something from an *absence* needs the difference: "the daemon
+ * says it is not there" and "the daemon did not answer" look identical once the
+ * failure has been flattened to an empty list.
+ */
+export async function tryListAgents(
   executable: string = DEFAULT_CLAUDE_EXECUTABLE,
-): Promise<AgentSummary[]> {
+): Promise<AgentSummary[] | null> {
   try {
     const { stdout } = await execFileAsync(executable, ["agents", "--json", "--all"], {
       env: buildExecEnv(),
@@ -220,8 +229,14 @@ export async function listAgents(
     return parseAgentList(stdout);
   } catch {
     // A failing daemon must not take the caller down with it.
-    return [];
+    return null;
   }
+}
+
+export async function listAgents(
+  executable: string = DEFAULT_CLAUDE_EXECUTABLE,
+): Promise<AgentSummary[]> {
+  return (await tryListAgents(executable)) ?? [];
 }
 
 export async function readJobState(
@@ -312,15 +327,65 @@ export async function sendControlRequest(
 
 /**
  * Ask the daemon to stop and evict a background session.
- * Returns whether termination was confirmed — the caller decides what an
- * unconfirmed termination means for it.
+ *
+ * Reports whether the request was *accepted*, which is not the same as the
+ * session having exited — see `terminateSessionAndWait` for that. A caller that
+ * needs the session gone must confirm it disappeared.
  */
 export async function terminateSession(shortId: string): Promise<boolean> {
-  for (const socketPath of await findControlSockets()) {
+  const sockets = await findControlSockets();
+  // No daemon to ask is not "nothing left to stop" — it is no answer at all.
+  if (sockets.length === 0) return false;
+
+  let everyDaemonDisclaimed = true;
+  for (const socketPath of sockets) {
     const response = await sendControlRequest(socketPath, buildKillRequest(shortId));
     if (response?.ok === true) return true;
-    // ENOJOB means the daemon has no such job — nothing left to stop.
-    if (response?.code === "ENOJOB") return true;
+    // ENOJOB means *this* daemon has no such job. The loop exists because there
+    // may be several, so it settles nothing until every one of them has said
+    // it — answering early would report a kill against a daemon never asked.
+    if (response?.code !== "ENOJOB") everyDaemonDisclaimed = false;
+  }
+  return everyDaemonDisclaimed;
+}
+
+/**
+ * Stop a background session and wait for it to actually leave the agent list.
+ *
+ * The daemon acknowledges a kill by accepting it, not by having finished it,
+ * and the resident orchestrator is busy mid-turn most of the time. Trusting the
+ * acknowledgement is how two sessions end up running: the supervisor believes
+ * the old one is gone, launches its replacement, and never looks again.
+ *
+ * Returns whether the session is gone. Not being gone is a normal answer here —
+ * the caller reports it, and the next tick reconciles what is still standing.
+ */
+export async function terminateSessionAndWait(
+  shortId: string,
+  sessionId: string,
+  options: { executable?: string; attempts?: number; intervalMs?: number } = {},
+): Promise<boolean> {
+  const attempts = options.attempts ?? 5;
+  const intervalMs = options.intervalMs ?? 1000;
+
+  await terminateSession(shortId);
+
+  // Observation is the authority, so look before waiting: a daemon that evicts
+  // as it answers is already done, and sleeping first would charge every caller
+  // for a session that is gone.
+  //
+  // `tryListAgents`, not `listAgents`: a list that could not be read says
+  // nothing about the session, and the empty list `listAgents` substitutes
+  // would read as "not there" — the exact mistake this function exists to stop.
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) await new Promise((resume) => setTimeout(resume, intervalMs));
+    const agents = await tryListAgents(options.executable);
+    if (agents === null) continue;
+
+    const stillLive = agents.some(
+      (a) => a.sessionId === sessionId && (a.state === null || !isTerminalState(a.state)),
+    );
+    if (!stillLive) return true;
   }
   return false;
 }
