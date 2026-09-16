@@ -102,6 +102,7 @@ describe("activeOrder", () => {
   it("lists the live statuses in display order", () => {
     expect(activeOrder(DEFAULT_WORKFLOW)).toEqual([
       "In Progress",
+      "Question",
       "Todo",
       "In Review",
       "Test",
