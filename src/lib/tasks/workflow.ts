@@ -142,9 +142,18 @@ export function remindedStatuses(w: WorkflowStatuses): string[] {
   return [w.wait, w.question];
 }
 
-/** The live statuses, most urgent first — the order the task listing prints. */
+/**
+ * The live statuses, most urgent first — the order the task listing prints,
+ * and the set it falls back to when no statuses are asked for.
+ *
+ * `question` belongs here because the listing doubles as the default filter:
+ * leaving it out dropped every task waiting on an answer from the unfiltered
+ * listing, which is the set someone reaches for to find what has stalled. It
+ * sits above `queued` because a question stops work already begun, and above
+ * `wait` because it is answerable rather than external.
+ */
 export function activeOrder(w: WorkflowStatuses): string[] {
-  return [w.inProgress, w.queued, w.inReview, w.test, w.wait];
+  return [w.inProgress, w.question, w.queued, w.inReview, w.test, w.wait];
 }
 
 /** How the progress report groups statuses under its three headings. */
