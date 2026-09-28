@@ -313,6 +313,7 @@ claude --bg --name ai-impl-<ISSUE-ID> --model opus --effort xhigh \
 ### 4.4 ハートビート追記
 
 **巡回のたびに1行追記します。** 追記先は起動時に渡されたパスです。
+`at` は書き込む時点の UTC を `date -u +%Y-%m-%dT%H:%M:%SZ` で生成してください。手で書いた時刻や丸めた時刻は使わないでください。巡回ゲート（§4.5）は、ゲートの判定より後の `at` を持つ行を「巡回が終わった」印として読みます。
 
 ```json
 {"at":"2026-08-06T12:00:00.000Z","dispatched":["<ISSUE-ID>"],"handedToHuman":["<ISSUE-ID>"],"note":"1件投入、1件レビューへ"}

@@ -21,6 +21,9 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+/** Search results stop here; a list that reaches it may be missing the PR that changed. */
+const PULL_REQUEST_LIMIT = 200;
+
 /**
  * Run at the end of the resident session's wait, before it wakes to patrol.
  *
@@ -112,12 +115,13 @@ async function listOpenPullRequests(): Promise<string[] | null> {
         "search", "prs",
         "--author", "@me",
         "--state", "open",
-        "--limit", "200",
+        "--limit", String(PULL_REQUEST_LIMIT),
         "--json", "repository,number",
       ],
       { maxBuffer: 10 * 1024 * 1024 },
     );
     const rows = JSON.parse(stdout) as { repository?: { nameWithOwner?: string }; number?: number }[];
+    if (rows.length >= PULL_REQUEST_LIMIT) return null;
     return rows.map((row) => `${row.repository?.nameWithOwner ?? "?"}#${row.number ?? "?"}`);
   } catch {
     return null;
