@@ -2,6 +2,7 @@ import { sendErrorNotifications } from "./lib/notification.js";
 import { loadCoreConfig } from "./lib/core-config.js";
 import { runOrchestratorSupervisor, parseSupervisorArgs } from "./jobs/orchestrator-supervisor.js";
 import { runOrchestratorStatus } from "./jobs/orchestrator-status.js";
+import { runOrchestratorGate } from "./jobs/orchestrator-gate.js";
 import { runContainerSweep, parseContainerSweepArgs } from "./jobs/container-sweep.js";
 
 /**
@@ -12,7 +13,11 @@ import { runContainerSweep, parseContainerSweepArgs } from "./jobs/container-swe
  * on its own terms.
  */
 
-export type CoreJobName = "orchestrator-supervisor" | "orchestrator-status" | "container-sweep";
+export type CoreJobName =
+  | "orchestrator-supervisor"
+  | "orchestrator-status"
+  | "orchestrator-gate"
+  | "container-sweep";
 
 // The orchestrator itself is deliberately absent: it is a resident session,
 // not a job. Only its supervisor and its status view are cron-shaped.
@@ -20,6 +25,7 @@ const JOBS: Record<CoreJobName, () => Promise<void>> = {
   "orchestrator-supervisor": () =>
     runOrchestratorSupervisor(parseSupervisorArgs(process.argv.slice(3))),
   "orchestrator-status": runOrchestratorStatus,
+  "orchestrator-gate": runOrchestratorGate,
   "container-sweep": () => runContainerSweep(parseContainerSweepArgs(process.argv.slice(3))),
 };
 
@@ -33,6 +39,7 @@ function printUsage(): void {
 Available jobs:
   orchestrator-supervisor  常駐オーケストレータの健全性確認と起動 (--restart で指示ファイル反映のため強制再起動)
   orchestrator-status      オーケストレータ・子エージェント・待ち案件・使用量の状態表示
+  orchestrator-gate        待機明けに巡回が要るかを判定する (常駐セッションが待機の最後に呼ぶ)
   container-sweep          PRが完了した worktree の検証用コンテナを停止する
                            (--dry-run で判定だけ / --grace-hours=N / --report-after-days=N)`);
 }

@@ -72,6 +72,16 @@ export interface OrchestratorConfig {
    * supervisor tick.
    */
   startupGraceSeconds: number;
+  /**
+   * The longest the patrol gate may go without sending the session to a full
+   * patrol, however unchanged things look.
+   *
+   * The gate compares only what it can read without the session's tools, so
+   * anything outside that — inbound messages, work the session parked to look
+   * at later — rides on this period. It bounds the latency of those, not the
+   * wake-up cadence: the session still wakes every interval.
+   */
+  fullPatrolSeconds: number;
 
   /**
    * Context size at which the resident session is recycled. `null` disables.
@@ -163,6 +173,7 @@ export function loadOrchestratorConfig(): OrchestratorConfig {
     targetIntervalSeconds: parsePositiveInt("ORCHESTRATOR_TARGET_INTERVAL_SECONDS", 1200),
     maxIntervalSeconds: parsePositiveInt("ORCHESTRATOR_MAX_INTERVAL_SECONDS", 1800),
     startupGraceSeconds: parsePositiveInt("ORCHESTRATOR_STARTUP_GRACE_SECONDS", 1800),
+    fullPatrolSeconds: parsePositiveInt("ORCHESTRATOR_FULL_PATROL_SECONDS", 3600),
 
     maxSessionContextTokens: parseOptionalPositiveInt(
       "ORCHESTRATOR_MAX_SESSION_CONTEXT_TOKENS",
