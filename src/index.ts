@@ -38,7 +38,7 @@ function printUsage(): void {
 
 Available jobs:
   orchestrator-supervisor  常駐オーケストレータの健全性確認と起動 (--restart で指示ファイル反映のため強制再起動)
-  orchestrator-status      オーケストレータ・子エージェント・待ち案件・使用量の状態表示
+  orchestrator-status      オーケストレータ・子エージェント・待ち案件の状態表示
   orchestrator-gate        待機明けに巡回が要るかを判定する (常駐セッションが待機の最後に呼ぶ)
   container-sweep          PRが完了した worktree の検証用コンテナを停止する
                            (--dry-run で判定だけ / --grace-hours=N / --report-after-days=N)`);

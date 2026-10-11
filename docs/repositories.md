@@ -45,6 +45,7 @@ mkdir -p ~/.config/ai-orchestrator
 | `branchPrefix` | ブランチ名の接頭辞 |
 | `localPatch` | ローカル専用パッチの所在。適用ファイルは worktree 構築直後にステージング不能にされる |
 | `model` | このリポジトリでの実装モデル指定 |
+| `group` | このリポジトリが属するタスクのグループ（`work` / `private`）。オーケストレータをグループごとに分けるときに使う（[multiple-accounts.md](multiple-accounts.md)） |
 | `rebase` | rebase 時に「読まずにコマンドで解決する」パスとコマンド（下記） |
 
 `rebase` は `src/cli/rebase-triage.ts` が読む。**書かなければロックファイルしか生成物と見なさない。**

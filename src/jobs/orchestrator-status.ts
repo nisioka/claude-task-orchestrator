@@ -12,7 +12,13 @@ import {
   type HeartbeatRecord,
 } from "../lib/agent-runtime.js";
 import { createTaskProvider } from "../lib/tasks/factory.js";
-import { fetchUsage, getAccessToken, type UsageResponse } from "../lib/claude-usage.js";
+import {
+  findGroupMismatches,
+  loadRepositoriesForScope,
+  scopeFilter,
+  withoutMismatches,
+  type GroupMismatch,
+} from "../lib/task-scope.js";
 import {
   assessContext,
   formatContext,
@@ -290,19 +296,17 @@ export function renderOrchestrator(
 }
 
 /**
- * Usage is reported, never acted on.
+ * Tasks the orchestrator will not start because their group and their
+ * repository's group disagree.
  *
- * On a subscription the binding constraint is quota rather than money, and the
- * per-model consumption ratio is not published. Keeping both windows on screen
- * is what makes "can this keep running?" a question with a daily answer.
+ * Shown apart from the AI's queue rather than inside it: listing them there
+ * would say "the AI has this", when the point is that it does not.
  */
-export function renderUsage(usage: UsageResponse | null): string[] {
-  if (!usage) return ["  使用量を取得できませんでした"];
-
-  return [
-    `  5時間枠: ${usage.five_hour.utilization}%  (リセット: ${formatInstant(usage.five_hour.resets_at)})`,
-    `  7日枠:   ${usage.seven_day.utilization}%  (リセット: ${formatInstant(usage.seven_day.resets_at)})`,
-  ];
+export function renderMismatches(mismatches: GroupMismatch[]): string[] {
+  return mismatches.flatMap((m) => [
+    `  ⚠ ${m.task.id}  ${m.task.title}`,
+    `    タスクのグループ: ${m.task.group} / ラベル ${m.label} のグループ: ${m.repositoryGroup}`,
+  ]);
 }
 
 function formatInstant(iso: string): string {
@@ -321,17 +325,29 @@ export async function runOrchestratorStatus(): Promise<void> {
 
   const tasks = createTaskProvider(appConfig);
 
-  const [agents, heldByDaemon, heartbeat, aiIssues, humanIssues, usage] = await Promise.all([
+  const scope = scopeFilter(config.group);
+
+  const [agents, heldByDaemon, heartbeat, assignedIssues, humanIssues, repositories] = await Promise.all([
     listAgents(config.claudeExecutable),
     // 生きているかはデーモンに聞く。state ファイルは子が最後に書いた値でしかない
     listDaemonJobs(),
     readLastHeartbeat(config.heartbeatPath),
     // AIのボールは担当者だけで決まる。ステータスでは絞らず、Backlog と終了系だけを型で外す
-    tasks.list({ assignee: "ai", excludeStatuses: offTheQueueStatuses(workflow), withDescription: true }),
+    tasks.list({
+      assignee: "ai",
+      excludeStatuses: offTheQueueStatuses(workflow),
+      withDescription: true,
+      ...scope,
+    }),
     // 当事者は2人しかいないので、「AI以外に割り当て済み」は「人間に割り当て済み」と同じ
-    tasks.list({ assignee: "human", statuses: humanBallStatuses(workflow) }),
-    readUsage(),
+    tasks.list({ assignee: "human", statuses: humanBallStatuses(workflow), ...scope }),
+    loadRepositoriesForScope(appConfig.repositoriesPath),
   ]);
+
+  // Read-only here: the gate and the supervisor hand these back. Until they
+  // have, the view must not present them as work the AI is holding.
+  const mismatches = findGroupMismatches(assignedIssues, repositories);
+  const aiIssues = withoutMismatches(assignedIssues, mismatches);
 
   const orchestrator =
     agents.find((a) => a.name === ORCHESTRATOR_SESSION_NAME && isRunningAgent(a, heldByDaemon)) ??
@@ -358,6 +374,7 @@ export async function runOrchestratorStatus(): Promise<void> {
 
   const lines = [
     `AIタスクオーケストレータ 状態  (${now.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })})`,
+    ...(config.group ? [`  対象グループ: ${config.group}`] : []),
     "",
     "■ 常駐オーケストレータ",
     ...renderOrchestrator(
@@ -384,6 +401,9 @@ export async function runOrchestratorStatus(): Promise<void> {
     "",
     `■ AIのボール (${aiIssues.length}件)`,
     ...renderAiQueue(aiIssues, now),
+    ...(mismatches.length === 0
+      ? []
+      : ["", `■ グループ不一致のため未着手 (${mismatches.length}件)`, ...renderMismatches(mismatches)]),
     "",
     `■ 予約投入 (${schedule.pending.length}件${
       schedule.invalid.length > 0 ? ` / 不正 ${schedule.invalid.length}件` : ""
@@ -392,9 +412,6 @@ export async function runOrchestratorStatus(): Promise<void> {
     "",
     `■ あなたのボール (${humanIssues.length}件)`,
     ...renderHumanQueue(humanIssues, now, workflow),
-    "",
-    "■ 使用量",
-    ...renderUsage(usage),
   ];
 
   console.log(lines.join("\n"));
@@ -403,13 +420,4 @@ export async function runOrchestratorStatus(): Promise<void> {
 /** The transcript is named by the job state, so an absent state means no measurement. */
 async function readContextOf(state: AgentJobState | null): Promise<ContextSample | null> {
   return state?.transcriptPath ? readContextSample(state.transcriptPath) : null;
-}
-
-async function readUsage(): Promise<UsageResponse | null> {
-  try {
-    return await fetchUsage(await getAccessToken());
-  } catch {
-    // Reporting only — a usage lookup failure must not hide the rest.
-    return null;
-  }
 }

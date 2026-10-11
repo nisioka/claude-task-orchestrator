@@ -318,3 +318,42 @@ describe("orchestrator repository settings", () => {
     expect(repo.model).toBeUndefined();
   });
 });
+
+describe("repository group", () => {
+  beforeEach(() => {
+    mockReadFile.mockReset();
+    mockAccess.mockReset();
+    mockAccess.mockResolvedValue(undefined);
+  });
+
+  function configWithGroup(group: unknown) {
+    return JSON.stringify({
+      repositories: [{ label: "app", path: "/home/user/projects/app", baseBranch: "main", group }],
+    });
+  }
+
+  it("reads the group a repository belongs to", async () => {
+    mockReadFile.mockResolvedValueOnce(configWithGroup("private"));
+
+    const { loadRepositoryConfig } = await import("../repositories.js");
+    const config = await loadRepositoryConfig("/path/to/config.json");
+
+    expect(config.repositories[0].group).toBe("private");
+  });
+
+  it("leaves the group unset when the entry names none", async () => {
+    mockReadFile.mockResolvedValueOnce(validConfig());
+
+    const { loadRepositoryConfig } = await import("../repositories.js");
+    const config = await loadRepositoryConfig("/path/to/config.json");
+
+    expect(config.repositories[0].group).toBeUndefined();
+  });
+
+  it("rejects an unknown group rather than treating the repository as ungrouped", async () => {
+    mockReadFile.mockResolvedValueOnce(configWithGroup("personal"));
+
+    const { loadRepositoryConfig } = await import("../repositories.js");
+    await expect(loadRepositoryConfig("/path/to/config.json")).rejects.toThrow("group");
+  });
+});

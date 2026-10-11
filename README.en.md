@@ -172,6 +172,7 @@ npx tsx src/cli/send-reminder.ts "message"
 
 - [docs/task-source.md](docs/task-source.md) — switching between Linear and ClickUp, and what each gets wrong
 - [docs/orchestrator-crontab.md](docs/orchestrator-crontab.md) — the cron entries, and how an edited instruction file takes effect
+- [docs/multiple-accounts.md](docs/multiple-accounts.md) — running one orchestrator per task group, each under its own Claude account (Japanese)
 
 ## Embedding it
 

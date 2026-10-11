@@ -21,6 +21,32 @@ describe("renderPromptText", () => {
     ).toBe("cd /repo && cat /out/child/impl.md && /core/src/cli/x.ts");
   });
 
+  it("fills in the instance settings the prompts quote", () => {
+    const text = "{{claudeBin}} agents; cat {{claudeConfigDir}}/jobs/x; cat {{repositoriesPath}}";
+
+    expect(
+      renderPromptText(text, {
+        names: {},
+        promptDir: "/out",
+        instance: {
+          claudeBin: "/opt/bin/claude",
+          claudeConfigDir: "/home/u/.claude-second",
+          repositoriesPath: "/etc/orch/repositories.json",
+        },
+      }),
+    ).toBe(
+      "/opt/bin/claude agents; cat /home/u/.claude-second/jobs/x; cat /etc/orch/repositories.json",
+    );
+  });
+
+  it("renders the instance settings as the single-account defaults when none are given", () => {
+    const text = "{{claudeBin}} agents; cat {{claudeConfigDir}}/jobs/x; cat {{repositoriesPath}}";
+
+    expect(renderPromptText(text, { names: {}, promptDir: "/out" })).toBe(
+      "claude agents; cat ~/.claude/jobs/x; cat ~/.config/ai-orchestrator/repositories.json",
+    );
+  });
+
   it("points repoDir at the core when nothing embeds it", () => {
     // Standalone, the two are the same place; a separate default would send the
     // prompts to a path that does not exist.

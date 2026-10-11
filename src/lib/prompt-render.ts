@@ -47,7 +47,34 @@ export interface RenderContext {
   childRules?: string;
   /** Sections contributed by the embedding repositories, already concatenated. */
   extraSections?: string;
+  /** Settings of the running instance that the prompts quote. */
+  instance?: InstancePlaceholders;
 }
+
+/**
+ * What differs between two orchestrators on the same machine.
+ *
+ * A prompt that spells out `~/.claude` or the default repository list is right
+ * for exactly one instance. With one orchestrator per Claude account, the
+ * session has to be told which config dir its job state is under and which
+ * binary starts its children — reading the other account's files finds nothing,
+ * and nothing looks the same as "the child is gone". The defaults reproduce
+ * what the prompts used to say literally.
+ */
+export interface InstancePlaceholders {
+  /** `{{repositoriesPath}}` */
+  repositoriesPath?: string;
+  /** `{{claudeBin}}` */
+  claudeBin?: string;
+  /** `{{claudeConfigDir}}` */
+  claudeConfigDir?: string;
+}
+
+const DEFAULT_INSTANCE: Required<InstancePlaceholders> = {
+  repositoriesPath: "~/.config/ai-orchestrator/repositories.json",
+  claudeBin: "claude",
+  claudeConfigDir: "~/.claude",
+};
 
 /**
  * One kind of child agent, and the rule file that describes it.
@@ -102,12 +129,20 @@ function renameStatuses(text: string, names: Record<string, string>): string {
  */
 export function substitutePaths(text: string, context: RenderContext): string {
   const coreDir = context.coreDir ?? CORE_DIR;
+  const instance = { ...DEFAULT_INSTANCE, ...definedOnly(context.instance) };
   return text
+    .replaceAll("{{repositoriesPath}}", instance.repositoriesPath)
+    .replaceAll("{{claudeBin}}", instance.claudeBin)
+    .replaceAll("{{claudeConfigDir}}", instance.claudeConfigDir)
     .replaceAll("{{coreDir}}", coreDir)
     .replaceAll("{{repoDir}}", context.repoDir ?? coreDir)
     .replaceAll("{{promptDir}}", context.promptDir)
     .replaceAll("{{childRules}}", context.childRules ?? "")
     .replaceAll("{{extraSections}}", context.extraSections ?? "");
+}
+
+function definedOnly(instance: InstancePlaceholders = {}): InstancePlaceholders {
+  return Object.fromEntries(Object.entries(instance).filter(([, value]) => value !== undefined));
 }
 
 /** `npx tsx <path>` を拾う。パスは空白まで。 */
@@ -226,6 +261,7 @@ export async function renderPrompts(
   names: Record<string, string>,
   repoDir: string = CORE_DIR,
   coreDir: string = CORE_DIR,
+  instance: InstancePlaceholders = {},
 ): Promise<string[]> {
   const sources = typeof sourceDirs === "string" ? [sourceDirs] : sourceDirs;
 
@@ -243,6 +279,7 @@ export async function renderPrompts(
     repoDir,
     coreDir,
     childRules: renderChildRules(rules, outDir),
+    instance,
   };
   context.extraSections = extras.map((text) => substitutePaths(text, context)).join("\n\n");
 

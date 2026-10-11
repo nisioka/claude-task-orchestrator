@@ -25,7 +25,15 @@ import {
 } from "../lib/agent-runtime.js";
 import { readContextSample } from "../lib/session-context.js";
 import { renderPrompts } from "../lib/prompt-render.js";
-import { loadWorkflow, promptNames } from "../lib/tasks/workflow.js";
+import { loadWorkflow, offTheQueueStatuses, promptNames } from "../lib/tasks/workflow.js";
+import { createTaskProvider } from "../lib/tasks/factory.js";
+import { DEFAULT_REPOSITORIES_PATH } from "../lib/repositories.js";
+import {
+  findGroupMismatches,
+  handBackMismatches,
+  loadRepositoriesForScope,
+  scopeFilter,
+} from "../lib/task-scope.js";
 import { sendNotifications } from "../lib/notification.js";
 import { truncateFieldValue } from "../lib/types.js";
 import type { DiscordPayload } from "../lib/types.js";
@@ -420,10 +428,34 @@ export function parseSupervisorArgs(argv: string[]): SupervisorOptions {
  */
 export interface SupervisorIo {
   checkPrerequisites(): Promise<PrerequisiteReport>;
+  /**
+   * Hand back the tasks whose group contradicts their repository's.
+   *
+   * Reaches the task source, so it sits behind this seam with the other
+   * outside calls. Run before a launch because a new session's first patrol
+   * comes before any gate has run.
+   */
+  handBackGroupMismatches(): Promise<void>;
 }
 
 export const REAL_SUPERVISOR_IO: SupervisorIo = {
   checkPrerequisites: () => checkResidencyPrerequisites(),
+  handBackGroupMismatches: async () => {
+    const appConfig = loadCoreConfig();
+    const config = loadOrchestratorConfig();
+    const tasks = createTaskProvider(appConfig);
+    const [assigned, repositories] = await Promise.all([
+      tasks.list({
+        assignee: "ai",
+        excludeStatuses: offTheQueueStatuses(loadWorkflow()),
+        ...scopeFilter(config.group),
+      }),
+      loadRepositoriesForScope(appConfig.repositoriesPath),
+    ]);
+    await handBackMismatches(tasks, findGroupMismatches(assigned, repositories), (payload) =>
+      sendNotifications(appConfig, payload),
+    );
+  },
 };
 
 /**
@@ -460,6 +492,12 @@ export async function runOrchestratorSupervisor(
     config.renderedPromptDir,
     promptNames(loadWorkflow()),
     config.repoDir,
+    undefined,
+    {
+      repositoriesPath: appConfig.repositoriesPath ?? DEFAULT_REPOSITORIES_PATH,
+      claudeBin: config.claudeExecutable,
+      claudeConfigDir: config.claudeConfigDir,
+    },
   );
 
   if (!(await fileExists(config.instructionPath))) {
@@ -552,6 +590,11 @@ export async function runOrchestratorSupervisor(
   }
 
   const prerequisites = await io.checkPrerequisites();
+
+  // A failure here must not keep the session from starting: the list the
+  // session works from leaves these tasks out on its own, and the gate hands
+  // them back on the next wake.
+  await io.handBackGroupMismatches().catch(() => undefined);
 
   let launched: AgentSummary;
   try {

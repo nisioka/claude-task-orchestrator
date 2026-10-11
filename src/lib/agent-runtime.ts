@@ -1,8 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { claudeConfigDir, daemonSocketDirName } from "./claude-config.js";
 import { buildExecEnv } from "./exec-env.js";
 
 const execFileAsync = promisify(execFile);
@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 /**
  * The one module that touches the background-agent machinery.
  *
- * `claude --bg`, `claude agents --json` and `~/.claude/jobs/<id>/state.json`
+ * `claude --bg`, `claude agents --json` and `<config dir>/jobs/<id>/state.json`
  * are not public interfaces. Confining them here means a format change costs
  * one file. Every parser below is a pure function that degrades instead of
  * throwing: losing a single tick is acceptable, taking the orchestrator down
@@ -159,8 +159,13 @@ export function buildLaunchArgs(options: LaunchOptions): string[] {
   return args;
 }
 
-export function jobStatePath(shortId: string, home: string = homedir()): string {
-  return join(home, ".claude", "jobs", shortId, "state.json");
+/**
+ * `configDir` defaults to the account this process runs under. The daemon
+ * writes job state under its own config dir, so reading another account's
+ * directory finds nothing rather than failing.
+ */
+export function jobStatePath(shortId: string, configDir: string = claudeConfigDir()): string {
+  return join(configDir, "jobs", shortId, "state.json");
 }
 
 /**
@@ -241,10 +246,10 @@ export async function listAgents(
 
 export async function readJobState(
   shortId: string,
-  home: string = homedir(),
+  configDir: string = claudeConfigDir(),
 ): Promise<AgentJobState | null> {
   try {
-    return parseJobState(await readFile(jobStatePath(shortId, home), "utf-8"));
+    return parseJobState(await readFile(jobStatePath(shortId, configDir), "utf-8"));
   } catch {
     return null;
   }
@@ -283,20 +288,36 @@ export function controlSocketRoot(uid: number = process.getuid?.() ?? 0): string
   return process.env.ORCHESTRATOR_DAEMON_SOCK_DIR || join("/tmp", `cc-daemon-${uid}`);
 }
 
-/** Candidate control sockets, newest first. The daemon may have rotated dirs. */
-export async function findControlSockets(uid: number = process.getuid?.() ?? 0): Promise<string[]> {
+/**
+ * Candidate control sockets, newest first. The daemon may have rotated dirs.
+ *
+ * Each Claude config dir runs its own daemon, so a machine with several
+ * accounts has several sockets. When the one belonging to this account can be
+ * told apart, only it is returned: `listDaemonJobs` needs every socket it asks
+ * to answer, and another account's unresponsive daemon would otherwise leave
+ * this one unable to tell a dead job from a live one. When it cannot be told
+ * apart — the naming is not a documented interface — every socket is returned,
+ * which is what happened before there was more than one.
+ */
+export async function findControlSockets(
+  uid: number = process.getuid?.() ?? 0,
+  configDir: string = claudeConfigDir(),
+): Promise<string[]> {
   const root = controlSocketRoot(uid);
   try {
     const { readdir, stat } = await import("node:fs/promises");
     const entries = await readdir(root, { withFileTypes: true });
-    const found: Array<{ path: string; mtimeMs: number }> = [];
+    const found: Array<{ path: string; mtimeMs: number; dir: string }> = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const path = join(root, entry.name, "control.sock");
       const info = await stat(path).catch(() => null);
-      if (info) found.push({ path, mtimeMs: info.mtimeMs });
+      if (info) found.push({ path, mtimeMs: info.mtimeMs, dir: entry.name });
     }
-    return found.sort((a, b) => b.mtimeMs - a.mtimeMs).map((f) => f.path);
+    const own = found.filter((f) => f.dir === daemonSocketDirName(configDir));
+    return (own.length > 0 ? own : found)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .map((f) => f.path);
   } catch {
     return [];
   }

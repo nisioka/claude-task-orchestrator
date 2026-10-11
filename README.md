@@ -171,6 +171,7 @@ npx tsx src/cli/send-reminder.ts "メッセージ"
 
 - [docs/task-source.md](docs/task-source.md) — Linear / ClickUp の切り替えと、それぞれの癖
 - [docs/orchestrator-crontab.md](docs/orchestrator-crontab.md) — cron への登録と、指示ファイルの反映
+- [docs/multiple-accounts.md](docs/multiple-accounts.md) — タスクのグループごとに別の Claude アカウントで動かす
 
 ## 取り込んで使う
 

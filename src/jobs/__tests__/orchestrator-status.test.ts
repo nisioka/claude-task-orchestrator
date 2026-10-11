@@ -4,7 +4,7 @@ import {
   renderHumanQueue,
   renderAiQueue,
   renderAgent,
-  renderUsage,
+  renderMismatches,
   renderOrchestrator,
   formatUntil,
   classifySchedules,
@@ -305,25 +305,22 @@ describe("renderOrchestrator", () => {
   });
 });
 
-// ─── renderUsage ────────────────────────────────────────────────────
+// ─── renderMismatches ───────────────────────────────────────────────
 
-describe("renderUsage", () => {
-  const usage = {
-    five_hour: { utilization: 12, resets_at: "2026-08-06T15:00:00.000Z" },
-    seven_day: { utilization: 47, resets_at: "2026-08-10T00:00:00.000Z" },
-  };
+describe("renderMismatches", () => {
+  it("names the task, its group and the repository group that contradicts it", () => {
+    const lines = renderMismatches([
+      {
+        task: issue({ id: "TASK-9", title: "誤ったグループ", group: "work", labels: ["site"] }),
+        label: "site",
+        repositoryGroup: "private",
+      },
+    ]).join("\n");
 
-  it("shows both windows with their reset times", () => {
-    const lines = renderUsage(usage).join("\n");
-
-    expect(lines).toContain("12%");
-    expect(lines).toContain("47%");
-    expect(lines).toContain("5時間枠");
-    expect(lines).toContain("7日枠");
-  });
-
-  it("says so when usage could not be read, rather than failing the whole view", () => {
-    expect(renderUsage(null).join("\n")).toContain("取得できませんでした");
+    expect(lines).toContain("TASK-9");
+    expect(lines).toContain("work");
+    expect(lines).toContain("site");
+    expect(lines).toContain("private");
   });
 });
 

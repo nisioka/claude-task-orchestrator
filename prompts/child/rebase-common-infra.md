@@ -20,7 +20,7 @@
    - 既存のものを使う前に `git -C <worktree> status -sb` で、**想定どおりのブランチにいて未コミットの変更が
      無いこと**を確認してください。違っていたら、そこを使わず新しい worktree を作ること
      （人間が別用途に使っている可能性があります）
-   - **このリポジトリは `~/.config/ai-orchestrator/repositories.json` に登録がありません。** `setupCommand` は無いので、
+   - **このリポジトリは `{{repositoriesPath}}` に登録がありません。** `setupCommand` は無いので、
      `main` から自分で `git worktree add` してください
 3. `origin/main` を rebase で取り込み、競合を解消する。**どちらの変更も捨てないこと**
 4. force push（自分のブランチのみ）して、MERGEABLE / CLEAN とCIの結果を確認する

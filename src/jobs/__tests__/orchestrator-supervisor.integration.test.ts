@@ -207,6 +207,8 @@ async function run(
   const { runOrchestratorSupervisor } = await import("../orchestrator-supervisor.js");
   await runOrchestratorSupervisor(options, {
     checkPrerequisites: async () => prerequisites,
+    // タスクソースへ届く呼び出しなので、ここでは何もしない。
+    handBackGroupMismatches: async () => {},
   });
 }
 
