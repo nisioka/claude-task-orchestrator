@@ -304,7 +304,7 @@ export function renderOrchestrator(
  */
 export function renderMismatches(mismatches: GroupMismatch[]): string[] {
   return mismatches.flatMap((m) => [
-    `  ⚠ ${m.task.id}  ${m.task.title}`,
+    `  ⚠ ${m.task.id}  ${m.task.title}  [担当: ${m.task.assignee?.name ?? "なし"}]`,
     `    タスクのグループ: ${m.task.group} / ラベル ${m.label} のグループ: ${m.repositoryGroup}`,
   ]);
 }
@@ -327,7 +327,7 @@ export async function runOrchestratorStatus(): Promise<void> {
 
   const scope = scopeFilter(config.group);
 
-  const [agents, heldByDaemon, heartbeat, assignedIssues, humanIssues, repositories] = await Promise.all([
+  const [agents, heldByDaemon, heartbeat, assignedIssues, heldByHuman, repositories] = await Promise.all([
     listAgents(config.claudeExecutable),
     // 生きているかはデーモンに聞く。state ファイルは子が最後に書いた値でしかない
     listDaemonJobs(),
@@ -340,14 +340,21 @@ export async function runOrchestratorStatus(): Promise<void> {
       ...scope,
     }),
     // 当事者は2人しかいないので、「AI以外に割り当て済み」は「人間に割り当て済み」と同じ
-    tasks.list({ assignee: "human", statuses: humanBallStatuses(workflow), ...scope }),
+    // ステータスでは絞らずに取り、「あなたのボール」は下で絞る。差し戻した不一致は
+    // どのステータスにも居うるので、絞って取ると差し戻した途端に見えなくなる
+    tasks.list({ assignee: "human", excludeStatuses: offTheQueueStatuses(workflow), ...scope }),
     loadRepositoriesForScope(appConfig.repositoriesPath),
   ]);
 
-  // Read-only here: the gate and the supervisor hand these back. Until they
-  // have, the view must not present them as work the AI is holding.
-  const mismatches = findGroupMismatches(assignedIssues, repositories);
+  // Read-only here: the gate and the supervisor hand these back. Both sides are
+  // checked, because a handback changes only the assignee: the task is still
+  // mislabelled, and still not being worked on, until a person fixes it. Looking
+  // at the AI's side alone would drop it from this view the moment it was handed
+  // back — exactly when the human needs to find it.
+  const mismatches = findGroupMismatches([...assignedIssues, ...heldByHuman], repositories);
   const aiIssues = withoutMismatches(assignedIssues, mismatches);
+  const ballStatuses = new Set(humanBallStatuses(workflow));
+  const humanIssues = heldByHuman.filter((issue) => ballStatuses.has(issue.status));
 
   const orchestrator =
     agents.find((a) => a.name === ORCHESTRATOR_SESSION_NAME && isRunningAgent(a, heldByDaemon)) ??
@@ -403,7 +410,7 @@ export async function runOrchestratorStatus(): Promise<void> {
     ...renderAiQueue(aiIssues, now),
     ...(mismatches.length === 0
       ? []
-      : ["", `■ グループ不一致のため未着手 (${mismatches.length}件)`, ...renderMismatches(mismatches)]),
+      : ["", `■ グループ不一致 — ラベルかグループの修正待ち (${mismatches.length}件)`, ...renderMismatches(mismatches)]),
     "",
     `■ 予約投入 (${schedule.pending.length}件${
       schedule.invalid.length > 0 ? ` / 不正 ${schedule.invalid.length}件` : ""

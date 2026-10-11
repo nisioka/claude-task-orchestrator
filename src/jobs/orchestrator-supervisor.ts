@@ -591,9 +591,10 @@ export async function runOrchestratorSupervisor(
 
   const prerequisites = await io.checkPrerequisites();
 
-  // A failure here must not keep the session from starting: the list the
-  // session works from leaves these tasks out on its own, and the gate hands
-  // them back on the next wake.
+  // A failure here must not keep the session from starting. Nothing is let
+  // through by it: the list the session picks work from applies the same check
+  // and fails outright when the check cannot be made, and the gate hands the
+  // tasks back on the next wake.
   await io.handBackGroupMismatches().catch(() => undefined);
 
   let launched: AgentSummary;

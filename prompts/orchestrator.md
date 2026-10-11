@@ -173,8 +173,8 @@ npx tsx {{coreDir}}/src/cli/personal-issues.ts     # イシュー一覧
 子エージェントの詳細は次で取れます。
 
 ```bash
-{{claudeBin}} agents --json --all
-cat {{claudeConfigDir}}/jobs/<短縮ID>/state.json
+"{{claudeBin}}" agents --json --all
+cat "{{claudeConfigDir}}/jobs/<短縮ID>/state.json"
 ```
 
 **タスクソースの読み書きは、`{{coreDir}}/src/cli/` の CLI を経由してください。** MCP ツールがどの資格情報で動いているかは自明ではなく、タスクソースへの書き込みは必ずAIユーザー名義である必要があるためです。
@@ -263,7 +263,7 @@ MCP を**読み取りに**使うのは構いません。他所のチケット本
 | 判断委譲 | `ai-judge-<ISSUE-ID>` |
 
 ```bash
-{{claudeBin}} --bg --name ai-impl-<ISSUE-ID> --model opus --effort xhigh \
+"{{claudeBin}}" --bg --name ai-impl-<ISSUE-ID> --model opus --effort xhigh \
   "指示ファイル /path/to/instructions.md を読んで作業してください"
 ```
 
@@ -895,7 +895,7 @@ git -C <worktree> update-index --skip-worktree -- <導出したファイル...>
 
 1. Linearから「ステータス `In Progress` かつ担当者=あなた」のイシューを取得する
 2. 各イシュー識別子から、期待される子エージェント名 `ai-impl-<ISSUE-ID>` を導出する
-3. `{{claudeBin}} agents --json --all` に**その名前が実在するか**を見る
+3. `"{{claudeBin}}" agents --json --all` に**その名前が実在するか**を見る
 
 | 結果 | 意味 | 対応 |
 |---|---|---|

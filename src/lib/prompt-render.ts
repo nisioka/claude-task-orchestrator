@@ -58,8 +58,12 @@ export interface RenderContext {
  * for exactly one instance. With one orchestrator per Claude account, the
  * session has to be told which config dir its job state is under and which
  * binary starts its children — reading the other account's files finds nothing,
- * and nothing looks the same as "the child is gone". The defaults reproduce
- * what the prompts used to say literally.
+ * and nothing looks the same as "the child is gone". The defaults name the
+ * same places the prompts used to spell out literally.
+ *
+ * The prompts quote these inside double quotes, so a path with a space in it
+ * stays one argument. That is why the defaults say `$HOME` rather than `~`: a
+ * tilde is not expanded inside quotes.
  */
 export interface InstancePlaceholders {
   /** `{{repositoriesPath}}` */
@@ -71,9 +75,9 @@ export interface InstancePlaceholders {
 }
 
 const DEFAULT_INSTANCE: Required<InstancePlaceholders> = {
-  repositoriesPath: "~/.config/ai-orchestrator/repositories.json",
+  repositoriesPath: "$HOME/.config/ai-orchestrator/repositories.json",
   claudeBin: "claude",
-  claudeConfigDir: "~/.claude",
+  claudeConfigDir: "$HOME/.claude",
 };
 
 /**

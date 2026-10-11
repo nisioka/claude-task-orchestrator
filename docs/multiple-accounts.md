@@ -34,7 +34,12 @@ Claude Code CLI は `CLAUDE_CONFIG_DIR` に従う。認証情報も、バック�
 状態ディレクトリを共有すると、2つの常駐セッションが同じハートビートと同じセッションIDの記録を
 奪い合い、supervisor は片方を「もう片方の重複」と見て終了させる。
 
-cron は系統ごとに1行ずつ書く。ロックファイルも分ける。
+cron は系統ごとに1行ずつ書く。ロックファイルも分ける。ロックとログは状態ディレクトリに置くので、
+登録する前に作っておく。無いと `flock` もログの追記も失敗し、supervisor は一度も走らない。
+
+```bash
+mkdir -p ~/.local/state/ai-orchestrator-a ~/.local/state/ai-orchestrator-b
+```
 
 ```cron
 */20 * * * * flock -n $HOME/.local/state/ai-orchestrator-a/supervisor.lock -c 'cd /path/to/repo && CLAUDE_CONFIG_DIR=$HOME/.claude-a ORCHESTRATOR_GROUP=work ORCHESTRATOR_STATE_DIR=$HOME/.local/state/ai-orchestrator-a npx tsx src/index.ts orchestrator-supervisor' >> $HOME/.local/state/ai-orchestrator-a/supervisor.log 2>&1
@@ -68,6 +73,14 @@ CLAUDE_CONFIG_DIR=~/.claude-a ORCHESTRATOR_GROUP=work \
 - タスクの担当者を人間へ戻し、理由をコメントに書き、通知を1通出す
 - 常駐セッションが作業を選ぶ一覧（`personal-issues`）にも、`orchestrator-status` の
   「AIのボール」にも出さない
+
+担当者の変更に失敗したタスクは、「差し戻せなかった」として別に通知する。着手はされないが担当者は
+元のままなので、人が手で直す必要がある。差し戻した後も、ラベルかグループが直るまでは
+`orchestrator-status` の「グループ不一致」の節に出続ける。
+
+リポジトリ一覧が**あるのに読めない**とき（JSON が壊れている、`group` に未知の値がある）は、
+判定を飛ばさずにエラーで止まる。黙って判定なしで進むと、効いていない歯止めを信じ続けることになる。
+一覧そのものが無いときは、判定するものが無いので何もしない。
 
 判定はコードで行い、常駐セッションがタスクを読む前に済ませる。supervisor がセッションを
 起動する直前と、巡回ゲートが走るたびに見ている。

@@ -1,5 +1,10 @@
+import { access } from "node:fs/promises";
 import type { DiscordPayload } from "./types.js";
-import { loadRepositoryConfig, type RepositoryMapping } from "./repositories.js";
+import {
+  DEFAULT_REPOSITORIES_PATH,
+  loadRepositoryConfig,
+  type RepositoryMapping,
+} from "./repositories.js";
 import type { TaskProvider } from "./tasks/provider.js";
 import type { Task, TaskFilter, TaskGroup } from "./tasks/types.js";
 
@@ -68,18 +73,25 @@ export function withoutMismatches(tasks: Task[], mismatches: GroupMismatch[]): T
 }
 
 /**
- * The repository list, or nothing when it cannot be read.
+ * The repository list, or nothing when there is no list at all.
  *
  * Reporting jobs ran without this file before groups existed and must keep
  * doing so. With no list there is nothing to contradict, so the result is "no
  * mismatches" — the same as a list in which no repository names a group.
+ *
+ * A list that exists but cannot be used is a different thing and is **not**
+ * turned into "no mismatches". A typo in one `group` would otherwise switch the
+ * whole check off without a word, and a guard that fails open is worse than no
+ * guard: it is still believed. So that case throws, and the caller stops.
  */
 export async function loadRepositoriesForScope(path?: string): Promise<RepositoryMapping[]> {
+  const target = path || DEFAULT_REPOSITORIES_PATH;
   try {
-    return (await loadRepositoryConfig(path)).repositories;
+    await access(target);
   } catch {
     return [];
   }
+  return (await loadRepositoryConfig(target)).repositories;
 }
 
 export function buildMismatchComment(mismatch: GroupMismatch): string {
@@ -94,45 +106,75 @@ export function buildMismatchComment(mismatch: GroupMismatch): string {
   ].join("\n");
 }
 
-export function buildMismatchPayload(mismatches: GroupMismatch[]): DiscordPayload {
-  return {
-    embeds: [
-      {
-        title: `⚠ グループが一致しないタスクを差し戻しました (${mismatches.length}件)`,
-        description: mismatches
-          .map(
-            (m) =>
-              `${m.task.id}  ${m.task.title}\n` +
-              `　タスク: ${m.task.group} / ラベル ${m.label}: ${m.repositoryGroup}`,
-          )
-          .join("\n"),
-        color: 0xff9800,
-      },
-    ],
-  };
+function describeMismatches(mismatches: GroupMismatch[]): string {
+  return mismatches
+    .map(
+      (m) =>
+        `${m.task.id}  ${m.task.title}\n` +
+        `　タスク: ${m.task.group} / ラベル ${m.label}: ${m.repositoryGroup}`,
+    )
+    .join("\n");
+}
+
+/**
+ * One notification for everything found in a run.
+ *
+ * A task that could not be handed back is reported too, and separately: it is
+ * still assigned to the AI, so it is the one a person has to move by hand. It
+ * is kept off the work list regardless, but nothing else would say it exists.
+ */
+export function buildMismatchPayload(
+  handedBack: GroupMismatch[],
+  failed: GroupMismatch[] = [],
+): DiscordPayload {
+  const embeds = [];
+  if (handedBack.length > 0) {
+    embeds.push({
+      title: `⚠ グループが一致しないタスクを差し戻しました (${handedBack.length}件)`,
+      description: describeMismatches(handedBack),
+      color: 0xff9800,
+    });
+  }
+  if (failed.length > 0) {
+    embeds.push({
+      title: `🚨 グループが一致しないタスクを差し戻せませんでした (${failed.length}件)`,
+      description:
+        `${describeMismatches(failed)}\n\n` +
+        "担当者の変更に失敗しました。着手はしませんが、担当者は元のままです。手で直してください。",
+      color: 0xf44336,
+    });
+  }
+  return { embeds };
+}
+
+export interface HandBackResult {
+  handedBack: GroupMismatch[];
+  /** Mismatches whose reassignment failed. Still assigned as they were. */
+  failed: GroupMismatch[];
 }
 
 /**
  * Hand every mismatched task back to the human, and say so once.
  *
  * Reassigning is what takes the task off the AI's queue everywhere at once —
- * ownership is decided by the assignee — so it comes first, and a task whose
- * reassignment failed is left out of the report rather than announced as
- * handled. The comment explains the handback on the task itself, where the
- * human will be looking when they wonder why nothing happened.
- *
- * Returns the mismatches that were actually handed back.
+ * ownership is decided by the assignee — so it comes first. A task whose
+ * reassignment failed is not announced as handled; it is reported as failed,
+ * because it is the one that now needs a person. The comment explains the
+ * handback on the task itself, where the human will be looking when they
+ * wonder why nothing happened.
  */
 export async function handBackMismatches(
   tasks: TaskProvider,
   mismatches: GroupMismatch[],
   notify: (payload: DiscordPayload) => Promise<void>,
-): Promise<GroupMismatch[]> {
+): Promise<HandBackResult> {
   const handedBack: GroupMismatch[] = [];
+  const failed: GroupMismatch[] = [];
   for (const mismatch of mismatches) {
     try {
       await tasks.update(mismatch.task.id, { assignee: "human" });
     } catch {
+      failed.push(mismatch);
       continue;
     }
     handedBack.push(mismatch);
@@ -140,8 +182,8 @@ export async function handBackMismatches(
     await tasks.comment(mismatch.task.id, buildMismatchComment(mismatch)).catch(() => undefined);
   }
 
-  if (handedBack.length > 0) {
-    await notify(buildMismatchPayload(handedBack)).catch(() => undefined);
+  if (handedBack.length > 0 || failed.length > 0) {
+    await notify(buildMismatchPayload(handedBack, failed)).catch(() => undefined);
   }
-  return handedBack;
+  return { handedBack, failed };
 }

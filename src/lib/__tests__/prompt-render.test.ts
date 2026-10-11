@@ -43,7 +43,7 @@ describe("renderPromptText", () => {
     const text = "{{claudeBin}} agents; cat {{claudeConfigDir}}/jobs/x; cat {{repositoriesPath}}";
 
     expect(renderPromptText(text, { names: {}, promptDir: "/out" })).toBe(
-      "claude agents; cat ~/.claude/jobs/x; cat ~/.config/ai-orchestrator/repositories.json",
+      "claude agents; cat $HOME/.claude/jobs/x; cat $HOME/.config/ai-orchestrator/repositories.json",
     );
   });
 

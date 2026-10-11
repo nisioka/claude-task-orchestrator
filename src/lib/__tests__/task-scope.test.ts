@@ -1,9 +1,13 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildMismatchComment,
   buildMismatchPayload,
   findGroupMismatches,
   handBackMismatches,
+  loadRepositoriesForScope,
   scopeFilter,
   withoutMismatches,
 } from "../task-scope.js";
@@ -130,12 +134,12 @@ describe("handBackMismatches", () => {
     const tasks = provider();
     const notify = vi.fn().mockResolvedValue(undefined);
 
-    const handedBack = await handBackMismatches(tasks, mismatches, notify);
+    const result = await handBackMismatches(tasks, mismatches, notify);
 
     expect(tasks.update).toHaveBeenCalledWith("TASK-2", { assignee: "human" });
     expect(tasks.comment).toHaveBeenCalledWith("TASK-2", buildMismatchComment(mismatches[0]));
     expect(notify).toHaveBeenCalledTimes(1);
-    expect(handedBack).toEqual(mismatches);
+    expect(result).toEqual({ handedBack: mismatches, failed: [] });
   });
 
   it("does nothing, and says nothing, when there is nothing to hand back", async () => {
@@ -148,22 +152,30 @@ describe("handBackMismatches", () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it("does not announce a task whose reassignment failed", async () => {
+  it("reports a task whose reassignment failed as failed, not as handed back", async () => {
     const tasks = provider({ update: vi.fn().mockRejectedValue(new Error("boom")) });
-    const notify = vi.fn();
+    const notify = vi.fn().mockResolvedValue(undefined);
 
-    const handedBack = await handBackMismatches(tasks, mismatches, notify);
+    const result = await handBackMismatches(tasks, mismatches, notify);
 
-    expect(handedBack).toEqual([]);
+    expect(result).toEqual({ handedBack: [], failed: mismatches });
     expect(tasks.comment).not.toHaveBeenCalled();
-    expect(notify).not.toHaveBeenCalled();
+    // 担当者が元のままなので、人が手で動かすしかない。黙ると誰も気づかない
+    expect(notify).toHaveBeenCalledTimes(1);
+    const payload = notify.mock.calls[0][0];
+    expect(payload.embeds).toHaveLength(1);
+    expect(payload.embeds[0].title).toContain("差し戻せませんでした");
+    expect(payload.embeds[0].description).toContain("TASK-2");
   });
 
   it("keeps the handback when the comment or the notification is lost", async () => {
     const tasks = provider({ comment: vi.fn().mockRejectedValue(new Error("boom")) });
     const notify = vi.fn().mockRejectedValue(new Error("boom"));
 
-    await expect(handBackMismatches(tasks, mismatches, notify)).resolves.toEqual(mismatches);
+    await expect(handBackMismatches(tasks, mismatches, notify)).resolves.toEqual({
+      handedBack: mismatches,
+      failed: [],
+    });
   });
 });
 
@@ -184,7 +196,65 @@ describe("mismatch messages", () => {
   it("lists every handed-back task in the notification", () => {
     const payload = buildMismatchPayload([mismatch]);
 
+    expect(payload.embeds).toHaveLength(1);
     expect(payload.embeds?.[0].title).toContain("1件");
     expect(payload.embeds?.[0].description).toContain("TASK-2");
+  });
+
+  it("keeps the handed-back and the failed apart in one notification", () => {
+    const payload = buildMismatchPayload([mismatch], [mismatch]);
+
+    expect(payload.embeds?.map((e) => e.title)).toEqual([
+      expect.stringContaining("差し戻しました"),
+      expect.stringContaining("差し戻せませんでした"),
+    ]);
+  });
+});
+
+describe("loadRepositoriesForScope", () => {
+  let dir: string | null = null;
+
+  afterEach(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true });
+    dir = null;
+  });
+
+  async function configFile(content: string): Promise<string> {
+    dir = await mkdtemp(join(tmpdir(), "task-scope-"));
+    const path = join(dir, "repositories.json");
+    await writeFile(path, content);
+    return path;
+  }
+
+  it("is empty when there is no list, which is how reporting ran before groups existed", async () => {
+    expect(await loadRepositoriesForScope("/nonexistent/repositories.json")).toEqual([]);
+  });
+
+  it("returns the repositories of a usable list", async () => {
+    const path = await configFile("{}");
+    await writeFile(
+      path,
+      JSON.stringify({
+        repositories: [{ label: "app", path: dir, baseBranch: "main", group: "work" }],
+      }),
+    );
+
+    expect((await loadRepositoriesForScope(path)).map((r) => r.group)).toEqual(["work"]);
+  });
+
+  it("throws on a list with an unknown group instead of switching the check off", async () => {
+    const path = await configFile("{}");
+    await writeFile(
+      path,
+      JSON.stringify({
+        repositories: [{ label: "app", path: dir, baseBranch: "main", group: "personal" }],
+      }),
+    );
+
+    await expect(loadRepositoriesForScope(path)).rejects.toThrow("group");
+  });
+
+  it("throws on a list that is not valid JSON", async () => {
+    await expect(loadRepositoriesForScope(await configFile("{ not json"))).rejects.toThrow();
   });
 });
