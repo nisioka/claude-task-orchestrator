@@ -1,4 +1,11 @@
 import { loadCoreConfig } from "../lib/core-config.js";
+import { loadOrchestratorConfig } from "../lib/orchestrator-config.js";
+import {
+  findGroupMismatches,
+  loadRepositoriesForScope,
+  scopeFilter,
+  withoutMismatches,
+} from "../lib/task-scope.js";
 import { createTaskProvider } from "../lib/tasks/factory.js";
 import { activeOrder, loadWorkflow } from "../lib/tasks/workflow.js";
 
@@ -27,12 +34,22 @@ function parseArgs(argv: string[]): { statuses: string[]; includePrivate: boolea
 async function main() {
   const { statuses, includePrivate } = parseArgs(process.argv.slice(2));
 
-  const tasks = createTaskProvider(loadCoreConfig());
+  const appConfig = loadCoreConfig();
+  const { group } = loadOrchestratorConfig();
+  const tasks = createTaskProvider(appConfig);
 
-  let issues = await tasks.list({ statuses });
-  if (!includePrivate) {
+  let issues = await tasks.list({ statuses, ...scopeFilter(group) });
+  // An instance bound to a group lists exactly that group, whichever it is;
+  // `--include-private` is the unbound instance's switch and has nothing left
+  // to decide here.
+  if (!group && !includePrivate) {
     issues = issues.filter((task) => task.group !== "private");
   }
+
+  // This list is what the resident session picks work from, so a task whose
+  // group contradicts its repository must not be on it.
+  const repositories = await loadRepositoriesForScope(appConfig.repositoriesPath);
+  issues = withoutMismatches(issues, findGroupMismatches(issues, repositories));
 
   issues.sort((a, b) => {
     const sa = STATUS_ORDER[a.status] ?? 99;

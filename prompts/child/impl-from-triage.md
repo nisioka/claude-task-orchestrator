@@ -15,7 +15,7 @@ npx tsx {{coreDir}}/src/cli/personal-issue-detail.ts <ISSUE-ID> --comments=40
 
 ## 作業環境
 
-リポジトリ設定は `~/.config/ai-orchestrator/repositories.json` にあります。**そのリポジトリの `setupPrompt` を先に読んでください。** 作業環境の作り方、検証コマンド、そのリポジトリ固有の落とし穴はそこに書いてあります。`setupCommand` があるときはそれを使ってください。
+リポジトリ設定は `{{repositoriesPath}}` にあります。**そのリポジトリの `setupPrompt` を先に読んでください。** 作業環境の作り方、検証コマンド、そのリポジトリ固有の落とし穴はそこに書いてあります。`setupCommand` があるときはそれを使ってください。
 
 **worktree の場所を決め打ちしないでください。** `git -C <repo> worktree list --porcelain` で確認してください。
 

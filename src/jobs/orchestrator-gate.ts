@@ -5,6 +5,14 @@ import { promisify } from "node:util";
 import { loadCoreConfig } from "../lib/core-config.js";
 import { loadOrchestratorConfig, parseAgentName } from "../lib/orchestrator-config.js";
 import { isRunningAgent, listDaemonJobs, tryListAgents } from "../lib/agent-runtime.js";
+import { sendNotifications } from "../lib/notification.js";
+import {
+  findGroupMismatches,
+  handBackMismatches,
+  loadRepositoriesForScope,
+  scopeFilter,
+  withoutMismatches,
+} from "../lib/task-scope.js";
 import { createTaskProvider } from "../lib/tasks/factory.js";
 import { loadWorkflow, offTheQueueStatuses } from "../lib/tasks/workflow.js";
 import { classifySchedules } from "./orchestrator-status.js";
@@ -78,13 +86,29 @@ async function takeSnapshot(): Promise<GateSnapshot> {
   const tasks = createTaskProvider(appConfig);
   const now = new Date();
 
-  const [agents, heldByDaemon, aiIssues, openPullRequests] = await Promise.all([
+  const [agents, heldByDaemon, assignedIssues, openPullRequests, repositories] = await Promise.all([
     tryListAgents(config.claudeExecutable),
     listDaemonJobs(),
-    tasks.list({ assignee: "ai", excludeStatuses: offTheQueueStatuses(workflow), withDescription: true }),
+    tasks.list({
+      assignee: "ai",
+      excludeStatuses: offTheQueueStatuses(workflow),
+      withDescription: true,
+      ...scopeFilter(config.group),
+    }),
     listOpenPullRequests(),
+    loadRepositoriesForScope(appConfig.repositoriesPath),
   ]);
   if (agents === null) throw new Error("エージェント一覧を取得できない");
+
+  // A task filed in one group but labelled for the other group's repository is
+  // handed back here, before the session wakes to it. Whatever could not be
+  // handed back is still left out of the snapshot, so it is never the reason
+  // for a patrol.
+  const mismatches = findGroupMismatches(assignedIssues, repositories);
+  if (mismatches.length > 0) {
+    await handBackMismatches(tasks, mismatches, (payload) => sendNotifications(appConfig, payload));
+  }
+  const aiIssues = withoutMismatches(assignedIssues, mismatches);
 
   const aiIssueIds = new Set(aiIssues.map((issue) => issue.id));
   const running = agents.flatMap((agent) => {

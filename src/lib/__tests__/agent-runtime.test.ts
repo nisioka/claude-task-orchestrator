@@ -13,6 +13,7 @@ import {
   classifyRun,
   buildLaunchArgs,
   jobStatePath,
+  findControlSockets,
   parseHeartbeatTail,
   isHeartbeatStale,
   pickLaunchedAgent,
@@ -20,6 +21,7 @@ import {
   TERMINAL_AGENT_STATES,
 } from "../agent-runtime.js";
 import type { AgentSummary } from "../agent-runtime.js";
+import { daemonSocketDirName } from "../claude-config.js";
 
 // ─── parseAgentList ─────────────────────────────────────────────────
 
@@ -348,9 +350,15 @@ describe("buildKillRequest", () => {
 // ─── jobStatePath ───────────────────────────────────────────────────
 
 describe("jobStatePath", () => {
-  it("points at the daemon's per-job state file", () => {
-    expect(jobStatePath("1b27421a", "/home/tester")).toBe(
+  it("points at the daemon's per-job state file under the given config dir", () => {
+    expect(jobStatePath("1b27421a", "/home/tester/.claude")).toBe(
       "/home/tester/.claude/jobs/1b27421a/state.json",
+    );
+  });
+
+  it("follows another account's config dir instead of assuming the default one", () => {
+    expect(jobStatePath("1b27421a", "/home/tester/.claude-second")).toBe(
+      "/home/tester/.claude-second/jobs/1b27421a/state.json",
     );
   });
 });
@@ -719,5 +727,52 @@ describe("listDaemonJobs", () => {
     await serve("a", { ok: true, op: "list", jobs: [] });
 
     expect(await listDaemonJobs()).toEqual(new Set());
+  });
+});
+
+// ─── findControlSockets with several accounts ───────────────────────
+
+describe("findControlSockets", () => {
+  let root: string | null = null;
+  const servers: Server[] = [];
+
+  afterEach(async () => {
+    await Promise.all(servers.map((s) => new Promise<void>((done) => s.close(() => done()))));
+    servers.length = 0;
+    vi.unstubAllEnvs();
+    if (root) await rm(root, { recursive: true, force: true });
+    root = null;
+  });
+
+  async function daemon(name: string): Promise<string> {
+    if (!root) {
+      await mkdir(join(homedir(), ".cache"), { recursive: true });
+      root = await mkdtemp(join(homedir(), ".cache", "sockets-"));
+      vi.stubEnv("ORCHESTRATOR_DAEMON_SOCK_DIR", root);
+    }
+    const dir = join(root, name);
+    await mkdir(dir, { recursive: true });
+    const server = createServer(() => undefined);
+    servers.push(server);
+    const path = join(dir, "control.sock");
+    await new Promise<void>((done) => server.listen(path, done));
+    return path;
+  }
+
+  it("returns only this account's daemon when it can be told apart", async () => {
+    const configDir = "/home/tester/.claude-second";
+    const own = await daemon(daemonSocketDirName(configDir));
+    await daemon(daemonSocketDirName("/home/tester/.claude"));
+
+    expect(await findControlSockets(undefined, configDir)).toEqual([own]);
+  });
+
+  it("returns every daemon when none of them is recognisably this account's", async () => {
+    const first = await daemon("unknown-a");
+    const second = await daemon("unknown-b");
+
+    expect((await findControlSockets(undefined, "/home/tester/.claude")).sort()).toEqual(
+      [first, second].sort(),
+    );
   });
 });

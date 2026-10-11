@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   loadOrchestratorConfig,
   isEffortLevel,
@@ -31,6 +32,8 @@ const ORCHESTRATOR_ENV = [
   "ORCHESTRATOR_MAX_SESSION_AGE_SECONDS",
   "ORCHESTRATOR_CHILD_CONTEXT_LIMIT_TOKENS",
   "ORCHESTRATOR_CLAUDE_BIN",
+  "ORCHESTRATOR_GROUP",
+  "CLAUDE_CONFIG_DIR",
 ];
 
 beforeEach(() => {
@@ -385,5 +388,34 @@ describe("loadOrchestratorConfig recycle limits", () => {
     vi.stubEnv("ORCHESTRATOR_CHILD_CONTEXT_LIMIT_TOKENS", "たくさん");
 
     expect(() => loadOrchestratorConfig()).toThrow(/不正です/);
+  });
+});
+
+// ─── One instance per group / account ───────────────────────────────
+
+describe("loadOrchestratorConfig group and account", () => {
+  it("is bound to no group, and to the default Claude config dir, unless told otherwise", () => {
+    const config = loadOrchestratorConfig();
+
+    expect(config.group).toBeNull();
+    expect(config.claudeConfigDir).toBe(join(homedir(), ".claude"));
+  });
+
+  it("binds the instance to the group named in ORCHESTRATOR_GROUP", () => {
+    vi.stubEnv("ORCHESTRATOR_GROUP", "private");
+
+    expect(loadOrchestratorConfig().group).toBe("private");
+  });
+
+  it("rejects a group it does not know instead of silently working on everything", () => {
+    vi.stubEnv("ORCHESTRATOR_GROUP", "personal");
+
+    expect(() => loadOrchestratorConfig()).toThrow("ORCHESTRATOR_GROUP");
+  });
+
+  it("reports the config dir the CLI will use, from CLAUDE_CONFIG_DIR", () => {
+    vi.stubEnv("CLAUDE_CONFIG_DIR", "/var/lib/claude-second");
+
+    expect(loadOrchestratorConfig().claudeConfigDir).toBe("/var/lib/claude-second");
   });
 });

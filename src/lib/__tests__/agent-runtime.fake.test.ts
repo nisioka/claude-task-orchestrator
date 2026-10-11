@@ -79,7 +79,7 @@ describe("launchBackgroundAgent against the fake agent", () => {
       pollAttempts: 50,
     });
 
-    const state = await readJobState(agent.id!, workDir);
+    const state = await readJobState(agent.id!, join(workDir, ".claude"));
 
     expect(state?.detail).toBe("fake agent ai-impl-TASK-1226");
     expect(state?.tokens).toBe(1234);

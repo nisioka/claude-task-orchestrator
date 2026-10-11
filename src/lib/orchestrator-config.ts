@@ -1,6 +1,8 @@
 import "dotenv/config";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { claudeConfigDir } from "./claude-config.js";
+import type { TaskGroup } from "./tasks/types.js";
 
 /**
  * Settings for the resident orchestrator session and the child agents it
@@ -121,6 +123,38 @@ export interface OrchestratorConfig {
    * launch → observe → collect path without spending model usage.
    */
   claudeExecutable: string;
+
+  /**
+   * The one task group this instance works on. `null` means every group.
+   *
+   * This is what lets several orchestrators share a machine and a task source
+   * without stepping on each other: one per group, each under its own Claude
+   * account (`CLAUDE_CONFIG_DIR`) and its own state directory. An instance with
+   * a group never reads the other group's tasks, so nothing has to be trusted
+   * to stay out of them.
+   */
+  group: TaskGroup | null;
+
+  /**
+   * The Claude config dir this instance runs under, for the prompts to quote.
+   *
+   * Not a setting of its own: it is whatever `CLAUDE_CONFIG_DIR` says, because
+   * that is what the CLI obeys, and a second knob could only disagree with it.
+   */
+  claudeConfigDir: string;
+}
+
+const TASK_GROUPS: readonly TaskGroup[] = ["work", "private"];
+
+function parseGroup(): TaskGroup | null {
+  const raw = process.env.ORCHESTRATOR_GROUP?.trim();
+  if (!raw) return null;
+  if (!(TASK_GROUPS as readonly string[]).includes(raw)) {
+    throw new Error(
+      `ORCHESTRATOR_GROUP が不正です: "${raw}"（指定できるのは ${TASK_GROUPS.join(" / ")}）`,
+    );
+  }
+  return raw as TaskGroup;
 }
 
 export function isEffortLevel(value: string): value is EffortLevel {
@@ -186,6 +220,9 @@ export function loadOrchestratorConfig(): OrchestratorConfig {
     ),
 
     claudeExecutable: process.env.ORCHESTRATOR_CLAUDE_BIN || "claude",
+
+    group: parseGroup(),
+    claudeConfigDir: claudeConfigDir(),
   };
 
   assertIntervalOrder(config);

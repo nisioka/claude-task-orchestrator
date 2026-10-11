@@ -2,6 +2,7 @@ import { readFile, access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, isAbsolute } from "node:path";
+import type { TaskGroup } from "./tasks/types.js";
 
 export interface RepositoryMapping {
   label: string;
@@ -31,6 +32,15 @@ export interface RepositoryMapping {
   /** Overrides the implementation model for this repository. */
   model?: string;
   /**
+   * The task group this repository belongs to.
+   *
+   * Optional, and only meaningful when orchestrators are split by group: a
+   * task whose group differs from its repository's is a filing mistake, and is
+   * handed back to the human instead of being worked on by the wrong instance.
+   * A repository without a group is never the cause of a mismatch.
+   */
+  group?: TaskGroup;
+  /**
    * Which conflict classes this repository resolves by command rather than by
    * reading. Absent means "only the built-in lock-file rules apply", which is
    * the safe reading: a path wrongly listed here gets overwritten.
@@ -55,10 +65,14 @@ export interface RepositoryConfig {
   repositories: RepositoryMapping[];
 }
 
-const DEFAULT_CONFIG_PATH = resolve(homedir(), ".config/ai-orchestrator/repositories.json");
+/** Where the repository list lives unless `ORCHESTRATOR_REPOSITORIES_PATH` says otherwise. */
+export const DEFAULT_REPOSITORIES_PATH = resolve(
+  homedir(),
+  ".config/ai-orchestrator/repositories.json",
+);
 
 export async function loadRepositoryConfig(configPath?: string): Promise<RepositoryConfig> {
-  const path = configPath || DEFAULT_CONFIG_PATH;
+  const path = configPath || DEFAULT_REPOSITORIES_PATH;
 
   let content: string;
   try {
@@ -113,6 +127,12 @@ export async function loadRepositoryConfig(configPath?: string): Promise<Reposit
       throw new Error(`リポジトリパスが存在しません: ${entry.path} (ラベル: ${entry.label})`);
     }
 
+    if (entry.group !== undefined && entry.group !== "work" && entry.group !== "private") {
+      throw new Error(
+        `リポジトリマッピング "${entry.label}" の group は work か private です: ${String(entry.group)}`,
+      );
+    }
+
     repositories.push({
       label: entry.label,
       path: entry.path,
@@ -123,6 +143,7 @@ export async function loadRepositoryConfig(configPath?: string): Promise<Reposit
       branchPrefix: typeof entry.branchPrefix === "string" ? entry.branchPrefix : undefined,
       localPatch: typeof entry.localPatch === "string" ? entry.localPatch : undefined,
       model: typeof entry.model === "string" ? entry.model : undefined,
+      group: entry.group as TaskGroup | undefined,
       rebase: parseRebaseSettings(entry.rebase, entry.label),
     });
   }
