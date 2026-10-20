@@ -106,7 +106,7 @@ draft の別、実機・実際の画面での確認は書かないでくださ�
 
 Storybook のハーネスで見たなら、それは検証の実績なので書いてください。
 
-そのうえで、**Discord へ一報を入れてください。**
+そのうえで、**Discord へ一報を入れてください。** ただし `Duplicate` / `Canceled` で閉じたときは入れません。人間に求めることが無いからです。
 
 ```bash
 npx tsx {{coreDir}}/src/cli/send-reminder.ts "メッセージ"
