@@ -778,6 +778,8 @@ Discord通知でも同じです（下記「通知経路」）。
 
 **上の3種類は `send-reminder.ts` で送ってください。** あなたが自分のセッションに書いた文章は、人間が端末を見ていない限り届きません。子に投入する指示ファイルにも、この一報を必ず書かせてください（§4.3 の共通ルールに入っています）。
 
+**一報する場合、指示ファイルには次の3つを指定してください。** イシューの識別子と件名、人間に求めること、リンク。
+
 ```bash
 npx tsx {{coreDir}}/src/cli/send-reminder.ts "メッセージ"     # Discord（Slackへフォールバック）
 npx tsx {{coreDir}}/src/cli/personal-comment.ts --id=<ISSUE-ID> --body="コメント本文"
