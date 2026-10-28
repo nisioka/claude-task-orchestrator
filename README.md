@@ -149,6 +149,9 @@ npx tsx src/index.ts orchestrator-supervisor
 
 # 検証用コンテナの回収
 npx tsx src/index.ts container-sweep --dry-run
+
+# 状況をブラウザで見る（読み取り専用。http://127.0.0.1:8787/）
+npx tsx src/index.ts dashboard
 ```
 
 タスクを直に読み書きする CLI は `src/cli/` にあります。

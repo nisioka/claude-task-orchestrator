@@ -4,6 +4,7 @@ import { runOrchestratorSupervisor, parseSupervisorArgs } from "./jobs/orchestra
 import { runOrchestratorStatus } from "./jobs/orchestrator-status.js";
 import { runOrchestratorGate } from "./jobs/orchestrator-gate.js";
 import { runContainerSweep, parseContainerSweepArgs } from "./jobs/container-sweep.js";
+import { runDashboard } from "./jobs/dashboard.js";
 
 /**
  * The core's own entry point, so it runs without a host repository.
@@ -17,7 +18,8 @@ export type CoreJobName =
   | "orchestrator-supervisor"
   | "orchestrator-status"
   | "orchestrator-gate"
-  | "container-sweep";
+  | "container-sweep"
+  | "dashboard";
 
 // The orchestrator itself is deliberately absent: it is a resident session,
 // not a job. Only its supervisor and its status view are cron-shaped.
@@ -27,6 +29,7 @@ const JOBS: Record<CoreJobName, () => Promise<void>> = {
   "orchestrator-status": runOrchestratorStatus,
   "orchestrator-gate": runOrchestratorGate,
   "container-sweep": () => runContainerSweep(parseContainerSweepArgs(process.argv.slice(3))),
+  dashboard: runDashboard,
 };
 
 function isValidJobName(name: string): name is CoreJobName {
@@ -41,7 +44,8 @@ Available jobs:
   orchestrator-status      オーケストレータ・子エージェント・待ち案件の状態表示
   orchestrator-gate        待機明けに巡回が要るかを判定する (常駐セッションが待機の最後に呼ぶ)
   container-sweep          PRが完了した worktree の検証用コンテナを停止する
-                           (--dry-run で判定だけ / --grace-hours=N / --report-after-days=N)`);
+                           (--dry-run で判定だけ / --grace-hours=N / --report-after-days=N)
+  dashboard                状態をローカルの Web ダッシュボードで表示する (常駐。読み取り専用)`);
 }
 
 export async function main(): Promise<void> {

@@ -150,6 +150,9 @@ npx tsx src/index.ts orchestrator-supervisor
 
 # Reap verification containers
 npx tsx src/index.ts container-sweep --dry-run
+
+# Watch it in a browser (read-only; http://127.0.0.1:8787/)
+npx tsx src/index.ts dashboard
 ```
 
 CLIs that read and write tasks directly live in `src/cli/`:
