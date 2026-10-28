@@ -8,6 +8,7 @@ import {
   summarizeLogTail,
   summarizePatrols,
 } from "../dashboard.js";
+import { formatRunMarker } from "../../lib/run-log.js";
 import type { OrchestratorSnapshot } from "../orchestrator-status.js";
 import type { Task } from "../../lib/tasks/types.js";
 import type { WorkflowStatuses } from "../../lib/tasks/workflow.js";
@@ -179,11 +180,27 @@ describe("summarizeLogTail", () => {
     expect(summarizeLogTail("ok 1\nジョブ実行エラー [x]: fetch failed\nok 2\n\n")).toEqual({
       lastLine: "ok 2",
       lastErrorLine: "ジョブ実行エラー [x]: fetch failed",
+      lastErrorAt: null,
     });
   });
 
   it("handles an empty log", () => {
-    expect(summarizeLogTail("")).toEqual({ lastLine: null, lastErrorLine: null });
+    expect(summarizeLogTail("")).toEqual({ lastLine: null, lastErrorLine: null, lastErrorAt: null });
+  });
+
+  it("dates the last error by the run marker above it, and skips markers as output", () => {
+    const log = [
+      formatRunMarker("job", new Date("2026-10-27T14:50:00Z")),
+      "ジョブ実行エラー [job]: fetch failed",
+      formatRunMarker("job", new Date("2026-10-28T02:10:00Z")),
+      "done",
+      formatRunMarker("job", new Date("2026-10-28T02:50:00Z")),
+    ].join("\n");
+    expect(summarizeLogTail(log)).toEqual({
+      lastLine: "done",
+      lastErrorLine: "ジョブ実行エラー [job]: fetch failed",
+      lastErrorAt: "2026-10-27T14:50:00.000Z",
+    });
   });
 });
 

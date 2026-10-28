@@ -5,6 +5,7 @@ import { runOrchestratorStatus } from "./jobs/orchestrator-status.js";
 import { runOrchestratorGate } from "./jobs/orchestrator-gate.js";
 import { runContainerSweep, parseContainerSweepArgs } from "./jobs/container-sweep.js";
 import { runDashboard } from "./jobs/dashboard.js";
+import { writeRunMarker } from "./lib/run-log.js";
 
 /**
  * The core's own entry point, so it runs without a host repository.
@@ -55,6 +56,8 @@ export async function main(): Promise<void> {
     printUsage();
     process.exit(1);
   }
+
+  writeRunMarker(jobName);
 
   try {
     await JOBS[jobName]();
