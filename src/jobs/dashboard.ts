@@ -15,6 +15,7 @@ import { assessContext } from "../lib/session-context.js";
 import { GATE_HEARTBEAT_MARKER } from "../lib/patrol-gate.js";
 import { loadOrchestratorConfig, parseAgentName } from "../lib/orchestrator-config.js";
 import { humanDutyByStatus } from "../lib/tasks/workflow.js";
+import { parseRunMarker } from "../lib/run-log.js";
 import type { Task } from "../lib/tasks/types.js";
 
 /**
@@ -42,7 +43,6 @@ const CRON_TTL_MS = 60 * 1000;
 
 const PATROL_ROWS = 30;
 const PATROL_DAYS = 7;
-const LOG_TAIL_LINES = 200;
 const DEFAULT_SYSLOG_PATH = "/var/log/syslog";
 const PULL_REQUEST_LIMIT = 100;
 
@@ -248,6 +248,8 @@ export interface CronJobView extends CronTarget {
   sizeBytes: number | null;
   lastLine: string | null;
   lastErrorLine: string | null;
+  /** Start of the run that printed `lastErrorLine`, from the run marker above it. Unknown in logs older than the markers. */
+  lastErrorAt: string | null;
 }
 
 function expandHomeIn(path: string): string {
@@ -287,13 +289,37 @@ export function parseCronTargets(crontab: string): CronTarget[] {
 
 const ERROR_LINE = /エラー|Error|ERR!/;
 
-/** The last line, and the last line that looks like an error, from the tail of a log. */
-export function summarizeLogTail(text: string): { lastLine: string | null; lastErrorLine: string | null } {
-  const lines = text.split("\n").filter((line) => line.trim() !== "").slice(-LOG_TAIL_LINES);
-  return {
-    lastLine: lines.at(-1) ?? null,
-    lastErrorLine: [...lines].reverse().find((line) => ERROR_LINE.test(line)) ?? null,
-  };
+export interface LogTailSummary {
+  lastLine: string | null;
+  lastErrorLine: string | null;
+  lastErrorAt: string | null;
+}
+
+/**
+ * The last line, and the last line that looks like an error with the start of
+ * the run that printed it, from the tail of a log. Run markers are not lines of
+ * output and are never reported as either.
+ */
+export function summarizeLogTail(text: string): LogTailSummary {
+  let lastLine: string | null = null;
+  let lastErrorLine: string | null = null;
+  let lastErrorAt: string | null = null;
+  let runAt: string | null = null;
+
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    const marker = parseRunMarker(line);
+    if (marker) {
+      runAt = marker.at;
+      continue;
+    }
+    lastLine = line;
+    if (ERROR_LINE.test(line)) {
+      lastErrorLine = line;
+      lastErrorAt = runAt;
+    }
+  }
+  return { lastLine, lastErrorLine, lastErrorAt };
 }
 
 /** The last start of each command, from syslog lines like `... CRON[123]: (user) CMD (<command>)`. */
@@ -352,7 +378,15 @@ async function cronJobs(syslogPath: string): Promise<CronJobView[]> {
           ...summarizeLogTail(await readTail(target.logPath)),
         };
       } catch {
-        return { ...target, startedAt, updatedAt: null, sizeBytes: null, lastLine: null, lastErrorLine: null };
+        return {
+          ...target,
+          startedAt,
+          updatedAt: null,
+          sizeBytes: null,
+          lastLine: null,
+          lastErrorLine: null,
+          lastErrorAt: null,
+        };
       }
     }),
   );

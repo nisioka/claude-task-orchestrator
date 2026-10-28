@@ -217,7 +217,8 @@ function renderCron(panel) {
       el("td", {},
         el("div", { class: "log" }, j.lastLine ?? ""),
         j.lastErrorLine && j.lastErrorLine !== j.lastLine ? el("div", { class: "log", style: "color:var(--bad)" }, j.lastErrorLine) : null,
-        j.lastErrorLine && j.lastErrorLine === j.lastLine ? el("div", { class: "pill bad" }, "最終行がエラー") : null))));
+        j.lastErrorLine && j.lastErrorLine === j.lastLine ? el("div", { class: "pill bad" }, "最終行がエラー") : null,
+        j.lastErrorLine ? el("div", { class: "tag" }, j.lastErrorAt ? `エラーは ${jst(j.lastErrorAt)} 起動の回` : "エラーの時刻は不明") : null))));
   return { cron: section(TITLES.cron, panel.data.length, table, true) };
 }
 
