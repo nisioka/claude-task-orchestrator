@@ -317,11 +317,37 @@ function formatInstant(iso: string): string {
 
 // ─── Job ────────────────────────────────────────────────────────────
 
-export async function runOrchestratorStatus(): Promise<void> {
+/** One running agent, with what its job state and transcript say about it. */
+export interface AgentView {
+  agent: AgentSummary;
+  state: AgentJobState | null;
+  context: ContextSample | null;
+}
+
+/**
+ * Everything the status view shows, gathered once and left unformatted, so that
+ * other views can be built on the same reading instead of a second one.
+ */
+export interface OrchestratorSnapshot {
+  takenAt: Date;
+  group: string | null;
+  workflow: WorkflowStatuses;
+  maxIntervalSeconds: number;
+  sessionContextLimitTokens: number | null;
+  childContextLimitTokens: number | null;
+  orchestrator: AgentView | null;
+  heartbeat: HeartbeatRecord | null;
+  children: AgentView[];
+  aiIssues: Task[];
+  mismatches: GroupMismatch[];
+  schedule: ScheduleView;
+  humanIssues: Task[];
+}
+
+export async function collectOrchestratorSnapshot(now = new Date()): Promise<OrchestratorSnapshot> {
   const appConfig = loadCoreConfig();
   const config = loadOrchestratorConfig();
   const workflow = loadWorkflow();
-  const now = new Date();
 
   const tasks = createTaskProvider(appConfig);
 
@@ -356,11 +382,11 @@ export async function runOrchestratorStatus(): Promise<void> {
   const ballStatuses = new Set(humanBallStatuses(workflow));
   const humanIssues = heldByHuman.filter((issue) => ballStatuses.has(issue.status));
 
-  const orchestrator =
+  const orchestratorAgent =
     agents.find((a) => a.name === ORCHESTRATOR_SESSION_NAME && isRunningAgent(a, heldByDaemon)) ??
     null;
 
-  const children = agents.filter((a) => {
+  const childAgents = agents.filter((a) => {
     const parsed = parseAgentName(a.name);
     if (!parsed || parsed.role === "orchestrator") return false;
     // `isRunningAgent` is the single test: it rejects terminal states, and then
@@ -369,41 +395,56 @@ export async function runOrchestratorStatus(): Promise<void> {
     return isRunningAgent(a, heldByDaemon);
   });
 
-  const childStates = await Promise.all(
-    children.map((child) => (child.id ? readJobState(child.id) : Promise.resolve(null))),
-  );
-  const childContexts = await Promise.all(childStates.map(readContextOf));
+  const [orchestrator, children] = await Promise.all([
+    orchestratorAgent ? viewOf(orchestratorAgent) : Promise.resolve(null),
+    Promise.all(childAgents.map(viewOf)),
+  ]);
 
-  const orchestratorState = orchestrator?.id ? await readJobState(orchestrator.id) : null;
-  const orchestratorContext = await readContextOf(orchestratorState);
+  return {
+    takenAt: now,
+    group: config.group,
+    workflow,
+    maxIntervalSeconds: config.maxIntervalSeconds,
+    sessionContextLimitTokens: config.maxSessionContextTokens,
+    childContextLimitTokens: config.childContextLimitTokens,
+    orchestrator,
+    heartbeat,
+    children,
+    aiIssues,
+    mismatches,
+    schedule: classifySchedules(aiIssues, now, workflow),
+    humanIssues,
+  };
+}
 
-  const schedule = classifySchedules(aiIssues, now, workflow);
+async function viewOf(agent: AgentSummary): Promise<AgentView> {
+  const state = agent.id ? await readJobState(agent.id) : null;
+  return { agent, state, context: await readContextOf(state) };
+}
 
-  const lines = [
+export function renderStatus(snapshot: OrchestratorSnapshot): string[] {
+  const now = snapshot.takenAt;
+  const { orchestrator, children, aiIssues, mismatches, schedule, humanIssues } = snapshot;
+
+  return [
     `AIタスクオーケストレータ 状態  (${now.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })})`,
-    ...(config.group ? [`  対象グループ: ${config.group}`] : []),
+    ...(snapshot.group ? [`  対象グループ: ${snapshot.group}`] : []),
     "",
     "■ 常駐オーケストレータ",
     ...renderOrchestrator(
-      orchestrator,
-      heartbeat,
+      orchestrator?.agent ?? null,
+      snapshot.heartbeat,
       now,
-      config.maxIntervalSeconds,
-      orchestratorContext,
-      config.maxSessionContextTokens,
+      snapshot.maxIntervalSeconds,
+      orchestrator?.context ?? null,
+      snapshot.sessionContextLimitTokens,
     ),
     "",
     `■ 実行中の子エージェント (${children.length}件)`,
     ...(children.length === 0
       ? ["  なし"]
-      : children.flatMap((child, index) =>
-          renderAgent(
-            child,
-            childStates[index],
-            now,
-            childContexts[index],
-            config.childContextLimitTokens,
-          ),
+      : children.flatMap((child) =>
+          renderAgent(child.agent, child.state, now, child.context, snapshot.childContextLimitTokens),
         )),
     "",
     `■ AIのボール (${aiIssues.length}件)`,
@@ -418,10 +459,12 @@ export async function runOrchestratorStatus(): Promise<void> {
     ...renderScheduled(schedule, now),
     "",
     `■ あなたのボール (${humanIssues.length}件)`,
-    ...renderHumanQueue(humanIssues, now, workflow),
+    ...renderHumanQueue(humanIssues, now, snapshot.workflow),
   ];
+}
 
-  console.log(lines.join("\n"));
+export async function runOrchestratorStatus(): Promise<void> {
+  console.log(renderStatus(await collectOrchestratorSnapshot()).join("\n"));
 }
 
 /** The transcript is named by the job state, so an absent state means no measurement. */
