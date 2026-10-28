@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AIタスク ダッシュボード</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" id="favicon">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --fg: #1d2330; --muted: #6b7385; --line: #e3e6ec;
+    --accent: #2f6fde; --warn: #b4540a; --warn-bg: #fff4e5; --bad: #c0362c; --bad-bg: #fdecea;
+    --ok: #1f8a4c; --bar: #9db8ee; --bar2: #f0b46b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b1f27; --fg: #e4e7ee; --muted: #8d95a8; --line: #2b313d;
+      --accent: #6e9df5; --warn: #f0a656; --warn-bg: #3a2a14; --bad: #f07a70; --bad-bg: #3d1e1b;
+      --ok: #5bc48a; --bar: #4a6fb8; --bar2: #b97a33;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.55 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card); position: sticky; top: 0; z-index: 1; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; padding: 16px 20px 40px; max-width: 1600px; margin: 0 auto; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+  section.wide { grid-column: 1 / -1; }
+  h2 { font-size: 14px; margin: 0 0 10px; display: flex; gap: 8px; align-items: baseline; }
+  h2 .count { color: var(--muted); font-weight: normal; }
+  h3 { font-size: 12px; color: var(--muted); margin: 12px 0 4px; font-weight: 600; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 5px 0; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: baseline; }
+  h3 + ul li:first-child { border-top: none; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a.id { color: var(--accent); }
+  .id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .age { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .muted { color: var(--muted); }
+  .empty { color: var(--muted); font-size: 13px; }
+  .alert { padding: 6px 10px; border-radius: 6px; margin: 6px 0; font-size: 13px; }
+  .alert.warn { background: var(--warn-bg); color: var(--warn); }
+  .alert.bad { background: var(--bad-bg); color: var(--bad); }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 13px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .pill { display: inline-block; padding: 0 7px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); }
+  .pill.ok { color: var(--ok); border-color: var(--ok); }
+  .pill.bad { color: var(--bad); border-color: var(--bad); }
+  .agent { padding: 8px 0; border-top: 1px solid var(--line); }
+  .agent:first-of-type { border-top: none; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 6px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; border-top: none; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .log { font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
+  .bars { display: flex; height: 10px; min-width: 120px; margin-top: 5px; border-radius: 3px; overflow: hidden; background: var(--line); }
+  .bars span { background: var(--bar2); }
+  .bars span.skip { background: var(--bar); }
+  .legend { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
+  .note { font-size: 13px; overflow-wrap: anywhere; }
+  .tag { font-size: 11px; color: var(--muted); }
+  @media (max-width: 520px) { main { grid-template-columns: 1fr; padding: 12px; } header { padding: 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>AIタスク ダッシュボード</h1>
+  <span class="meta" id="meta">読み込み中…</span>
+</header>
+<main id="main"></main>
+<script>
+const REFRESH_MS = 60 * 1000;
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") node.className = v;
+    else node.setAttribute(k, v);
+  }
+  for (const child of children.flat(Infinity)) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+function age(iso, now = Date.now()) {
+  if (!iso) return "不明";
+  const ms = now - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "不明";
+  if (ms < 60e3) return "1分未満";
+  const m = Math.floor(ms / 60e3), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (h < 1) return `${m}分`;
+  if (d < 1) return m % 60 ? `${h}時間${m % 60}分` : `${h}時間`;
+  return h % 24 ? `${d}日${h % 24}時間` : `${d}日`;
+}
+
+function jst(iso) {
+  return iso ? new Date(iso).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "不明";
+}
+
+function tokens(n) { return n === null ? "不明" : `${Math.round(n / 1000)}k`; }
+
+function section(title, count, body, wide) {
+  return el("section", { class: wide ? "wide" : null },
+    el("h2", {}, title, count === null ? null : el("span", { class: "count" }, `${count}件`)),
+    body);
+}
+
+function failed(panel) {
+  return el("div", { class: "alert bad" }, `取得できませんでした: ${panel.error}`);
+}
+
+function issueItem(issue, extra) {
+  return el("li", {},
+    el("a", { class: "id", href: issue.url, target: "_blank", rel: "noopener" }, issue.id),
+    el("span", { class: "title" }, issue.title),
+    extra ?? el("span", { class: "age" }, age(issue.updatedAt)));
+}
+
+function groupedIssues(groups, keyName) {
+  if (groups.length === 0) return el("p", { class: "empty" }, "なし");
+  return el("div", {}, groups.map((g) => [
+    el("h3", {}, `${g[keyName]} (${g.issues.length})`),
+    el("ul", {}, g.issues.map((i) => issueItem(i))),
+  ]));
+}
+
+function agentBlock(a) {
+  return el("div", { class: "agent" },
+    el("div", {}, el("strong", {}, a.name), " ", el("span", { class: "pill" }, a.state ?? "不明")),
+    el("dl", { class: "kv" },
+      el("dt", {}, "現況"), el("dd", {}, a.detail ?? "不明"),
+      el("dt", {}, "経過"), el("dd", {}, age(a.startedAt)),
+      el("dt", {}, "文脈"), el("dd", {}, `${tokens(a.contextTokens)}${a.contextLimitTokens ? ` / 上限 ${tokens(a.contextLimitTokens)}` : ""}`),
+      el("dt", {}, "作業場所"), el("dd", { class: "log" }, a.cwd || "不明")),
+    a.contextOver ? el("div", { class: "alert warn" }, "文脈が上限を超えています。引き継ぎを書かせて入れ替えてください") : null);
+}
+
+function renderStatus(panel) {
+  if (!panel.ok) return failedSlots(["human", "ai", "orchestrator", "children"], panel);
+  const s = panel.data;
+  // Wait is for something outside to arrive, not for the human to act: listed, not counted.
+  const human = s.humanQueue.flatMap((g) => g.issues).filter((i) => i.status !== s.waitStatus).length;
+  const ai = s.aiQueue.reduce((n, g) => n + g.issues.length, 0);
+  const o = s.orchestrator;
+  setBadge(human);
+
+  const orchestrator = el("div", {},
+    o.agent
+      ? [el("div", {}, el("span", { class: "pill ok" }, "稼働中"), " ", el("span", { class: "pill" }, o.agent.state ?? "不明")),
+         el("dl", { class: "kv" },
+           el("dt", {}, "経過"), el("dd", {}, age(o.agent.startedAt)),
+           el("dt", {}, "文脈"), el("dd", {}, `${tokens(o.agent.contextTokens)}${o.agent.contextLimitTokens ? ` / 上限 ${tokens(o.agent.contextLimitTokens)}` : ""}`),
+           el("dt", {}, "最終巡回"), el("dd", {}, o.heartbeatAt ? `${age(o.heartbeatAt)}前` : "なし")),
+         o.heartbeatNote ? el("p", { class: "note muted" }, o.heartbeatNote) : null]
+      : el("div", { class: "alert bad" }, "停止しています。次回の orchestrator-supervisor で起動されます"),
+    o.heartbeatStale ? el("div", { class: "alert bad" }, "巡回が止まっている可能性があります。orchestrator-supervisor を実行してください") : null,
+    o.agent?.contextOver ? el("div", { class: "alert warn" }, "文脈が上限に達しました。次回の supervisor で入れ替わります") : null);
+
+  const aiBody = el("div", {},
+    groupedIssues(s.aiQueue, "status"),
+    s.scheduled.length ? [el("h3", {}, "予約投入"), el("ul", {}, s.scheduled.map((x) => issueItem(x.issue, el("span", { class: "age" }, `${jst(x.at)} 開始`))))] : null,
+    s.invalidSchedules.map((x) => el("div", { class: "alert warn" }, `${x.issue.id} の start-after が不正: "${x.raw}"`)),
+    s.mismatches.length ? [el("h3", {}, "グループ不一致"), el("ul", {}, s.mismatches.map((m) => issueItem(m.issue, el("span", { class: "age" }, `${m.taskGroup ?? "なし"} / ${m.label}: ${m.repositoryGroup}`))))] : null);
+
+  return {
+    human: section(TITLES.human, human, groupedIssues(s.humanQueue, "duty")),
+    orchestrator: section(TITLES.orchestrator, null, orchestrator),
+    children: section(TITLES.children, s.children.length, s.children.length ? el("div", {}, s.children.map(agentBlock)) : el("p", { class: "empty" }, "なし")),
+    ai: section(TITLES.ai, ai, aiBody),
+  };
+}
+
+function renderPatrols(panel) {
+  if (!panel.ok) return failedSlots(["week", "recent"], panel);
+  const { days, recent } = panel.data;
+  const max = Math.max(1, ...days.map((d) => d.patrols + d.gateSkips));
+  const week = el("table", {},
+    el("tr", {}, el("th", {}, "日付"), el("th", {}, "AI巡回 / スキップ"), el("th", { class: "num" }, "AI巡回"), el("th", { class: "num" }, "スキップ"), el("th", { class: "num" }, "投入"), el("th", { class: "num" }, "人間へ")),
+    days.map((d) => el("tr", {},
+      el("td", {}, d.date.slice(5)),
+      el("td", {}, el("div", { class: "bars", title: `AI巡回 ${d.patrols} / スキップ ${d.gateSkips}` },
+        el("span", { style: `width:${(d.patrols / max) * 100}%` }),
+        el("span", { class: "skip", style: `width:${(d.gateSkips / max) * 100}%` }))),
+      el("td", { class: "num" }, d.patrols), el("td", { class: "num" }, d.gateSkips),
+      el("td", { class: "num" }, d.dispatched), el("td", { class: "num" }, d.handedToHuman))));
+  const rows = recent.filter((r) => !r.gate);
+  const log = el("ul", {}, rows.map((r) => el("li", {},
+    el("span", { class: "age" }, jst(r.at)),
+    el("span", { class: "title note" },
+      r.dispatched.length ? el("span", { class: "tag" }, `投入 ${r.dispatched.join(", ")}　`) : null,
+      r.handedToHuman.length ? el("span", { class: "tag" }, `人間へ ${r.handedToHuman.join(", ")}　`) : null,
+      r.note ?? ""))));
+  return {
+    week: section(TITLES.week, null, el("div", {}, week,
+      el("div", { class: "legend" }, el("i", { style: "background:var(--bar2)" }), "AI巡回", el("i", { style: "background:var(--bar)" }), "スキップ"))),
+    recent: section(TITLES.recent, rows.length, rows.length ? log : el("p", { class: "empty" }, "スキップのみ"), true),
+  };
+}
+
+function renderCron(panel) {
+  if (!panel.ok) return failedSlots(["cron"], panel);
+  const table = el("table", {},
+    el("tr", {}, el("th", {}, "ジョブ"), el("th", {}, "スケジュール"), el("th", {}, "最終起動"), el("th", {}, "ログ更新"), el("th", {}, "最終行 / 直近のエラー")),
+    panel.data.map((j) => el("tr", {},
+      el("td", {}, j.job),
+      el("td", { class: "log muted", style: "white-space:pre-line" }, j.schedules.join("\n")),
+      el("td", {}, j.startedAt ? `${age(j.startedAt)}前` : el("span", { class: "muted" }, "不明")),
+      el("td", {}, j.updatedAt ? `${age(j.updatedAt)}前` : el("span", { class: "pill bad" }, "ログなし"),
+        j.sizeBytes === 0 ? el("div", { class: "tag" }, "空") : null),
+      el("td", {},
+        el("div", { class: "log" }, j.lastLine ?? ""),
+        j.lastErrorLine && j.lastErrorLine !== j.lastLine ? el("div", { class: "log", style: "color:var(--bad)" }, j.lastErrorLine) : null,
+        j.lastErrorLine && j.lastErrorLine === j.lastLine ? el("div", { class: "pill bad" }, "最終行がエラー") : null))));
+  return { cron: section(TITLES.cron, panel.data.length, table, true) };
+}
+
+function renderPrs(panel) {
+  if (!panel.ok) return failedSlots(["prs"], panel);
+  return { prs: section(TITLES.prs, panel.data.length, panel.data.length
+    ? el("ul", {}, panel.data.map((p) => el("li", {},
+        el("span", { class: "id" }, `${p.repo.split("/").pop()}#${p.number}`),
+        el("a", { class: "title", href: p.url, target: "_blank", rel: "noopener" }, p.title))))
+    : el("p", { class: "empty" }, "なし")) };
+}
+
+// The human's ball, counted on the tab icon, so a waiting item shows without opening the tab.
+let faviconSvg = null;
+
+async function setBadge(count) {
+  try {
+    faviconSvg ??= await (await fetch("/favicon.svg")).text();
+  } catch {
+    return;
+  }
+  let svg = faviconSvg;
+  if (count > 0) {
+    const label = count > 99 ? "99+" : String(count);
+    const width = { 1: 18, 2: 24, 3: 30 }[label.length];
+    svg = svg.replace("</svg>",
+      `<rect x="${32 - width}" y="0" width="${width}" height="18" rx="9" fill="#d93025" stroke="#ffffff" stroke-width="1.5"/>` +
+      `<text x="${32 - width / 2}" y="13.5" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle">${label}</text></svg>`);
+  }
+  document.getElementById("favicon").href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+// Display order. `wide` slots span the whole row.
+const LAYOUT = [
+  ["human"], ["prs"], ["week"], ["ai"], ["orchestrator"], ["children"], ["cron", true], ["recent", true],
+];
+
+const TITLES = {
+  human: "あなたのボール", prs: "自分のオープンPR", week: "この1週間の巡回", ai: "AIのボール",
+  orchestrator: "常駐オーケストレータ", children: "実行中の子エージェント", cron: "cron ジョブ", recent: "直近の巡回の記録",
+};
+
+// Each source is fetched on its own, so a slow one (open PRs) does not hold up the rest.
+// A source fills one or more slots, by slot name.
+const SOURCES = [
+  ["status", renderStatus],
+  ["patrols", renderPatrols],
+  ["cron", renderCron],
+  ["prs", renderPrs],
+];
+
+function failedSlots(slots, panel) {
+  const wide = new Set(LAYOUT.filter(([, w]) => w).map(([name]) => name));
+  return Object.fromEntries(slots.map((slot) => [slot, section(TITLES[slot], null, failed(panel), wide.has(slot))]));
+}
+
+document.getElementById("main").append(...LAYOUT.map(([name, wide]) =>
+  el("section", { "data-slot": name, class: wide ? "wide" : null }, el("h2", {}, TITLES[name]), el("p", { class: "empty" }, "読み込み中…"))));
+
+async function load(source, render) {
+  let panel;
+  try {
+    const res = await fetch(`/api/${source}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    panel = await res.json();
+  } catch (e) {
+    panel = { ok: false, error: e.message };
+  }
+  for (const [slot, node] of Object.entries(render(panel))) {
+    node.setAttribute("data-slot", slot);
+    document.querySelector(`[data-slot="${slot}"]`).replaceWith(node);
+  }
+}
+
+async function refresh() {
+  await Promise.all(SOURCES.map(([source, render]) => load(source, render)));
+  document.getElementById("meta").textContent = `更新 ${jst(new Date().toISOString())}（1分ごと）`;
+}
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>
