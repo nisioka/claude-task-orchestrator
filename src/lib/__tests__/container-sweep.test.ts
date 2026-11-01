@@ -340,6 +340,8 @@ describe("findTaskForWorktree", () => {
     assignee: { id: "u1", name: "Someone" },
     url: "https://tasks.example/T-1",
     updatedAt: "2026-08-20T00:00:00Z",
+    dueDate: null,
+    priority: null,
     description: `orchestrator:begin\nworktree: ${WORKTREE}\norchestrator:end\n\nbody`,
     ...over,
   });
