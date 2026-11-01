@@ -3,6 +3,7 @@ import {
   adviceFor,
   buildSweepPayload,
   describeReport,
+  MAX_REPORT_FIELDS,
   needsAttention,
   pruneReportState,
   recordReports,
@@ -157,5 +158,17 @@ describe("selectReportsToNotify", () => {
 
     expect(pruneReportState(state, []).reported).toEqual({});
     expect(pruneReportState(state, [stale]).reported).toHaveProperty("repo-abcd1234");
+  });
+});
+
+describe("buildSweepPayload with more reports than fit", () => {
+  it("spells out MAX_REPORT_FIELDS of them and counts the rest", () => {
+    const many = Array.from({ length: MAX_REPORT_FIELDS + 2 }, (_, i) =>
+      decision({ action: "report", reason: "PRが無いまま 3 日以上残っている", project: { ...decision().project, project: `p${i}` } }),
+    );
+    const fields = buildSweepPayload([], many, [], false).embeds?.[0].fields ?? [];
+
+    expect(fields).toHaveLength(MAX_REPORT_FIELDS + 1);
+    expect(fields[MAX_REPORT_FIELDS].value).toContain("あと 2 件");
   });
 });

@@ -11,7 +11,7 @@
  * See `src/lib/container-sweep.ts` for the decision rules.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadCoreConfig } from "../lib/core-config.js";
@@ -155,10 +155,9 @@ export async function runContainerSweep(
   }
 
   const config = loadCoreConfig();
-  if (report.length > 0) await attachTasks(report, config);
-
   const previous = await loadReportState(args.statePath);
   const due = selectReportsToNotify(report, previous, now, args.reportIntervalHours * HOUR_MS);
+  if (due.length > 0) await attachTasks(due, config);
   const held = report.length - due.length;
   if (held > 0) {
     console.log(`  要確認 ${held} 件は前回の通知から ${args.reportIntervalHours} 時間未満のため通知しない`);
@@ -176,10 +175,18 @@ export async function runContainerSweep(
     return;
   }
   await sendNotifications(config, payload);
-  await saveReportState(args.statePath, recordReports(pruneReportState(previous, report), due, now));
+  // Only what the reader actually saw counts as reported. Anything behind the
+  // "ほか N 件" line never had its text delivered, so it is still due next run.
+  await saveReportState(
+    args.statePath,
+    recordReports(pruneReportState(previous, report), due.slice(0, MAX_REPORT_FIELDS), now),
+  );
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+
+/** How many undecidable stacks one notification spells out in full. */
+export const MAX_REPORT_FIELDS = 5;
 
 /**
  * Name the task behind each undecidable stack.
@@ -260,7 +267,11 @@ async function loadReportState(path: string): Promise<ReportState> {
 async function saveReportState(path: string, state: ReportState): Promise<void> {
   try {
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    // Write beside and rename, so a crash mid-write leaves the old file whole
+    // instead of a truncated one that reads back as "nothing reported yet".
+    const tmp = `${path}.${process.pid}.tmp`;
+    await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await rename(tmp, path);
   } catch (err) {
     // The sweep itself succeeded. Losing the record only brings the next
     // reminder forward; it never stops or repeats a teardown.
@@ -363,14 +374,17 @@ export function buildSweepPayload(
 
   const fields: NonNullable<DiscordEmbed["fields"]> = [];
 
-  for (const d of report.slice(0, 5)) {
+  for (const d of report.slice(0, MAX_REPORT_FIELDS)) {
     fields.push({
       name: `⚠️ 要確認: ${d.task ? d.task.id : d.project.project}`,
       value: describeReport(d),
     });
   }
-  if (report.length > 5) {
-    fields.push({ name: "ほか", value: `要確認があと ${report.length - 5} 件。cron のログに全件ある` });
+  if (report.length > MAX_REPORT_FIELDS) {
+    fields.push({
+      name: "ほか",
+      value: `要確認があと ${report.length - MAX_REPORT_FIELDS} 件。cron のログに全件ある`,
+    });
   }
   for (const f of failures.slice(0, 5)) {
     fields.push({
