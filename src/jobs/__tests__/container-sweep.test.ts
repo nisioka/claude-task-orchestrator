@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { needsAttention, buildSweepPayload } from "../container-sweep.js";
+import {
+  adviceFor,
+  buildSweepPayload,
+  describeReport,
+  MAX_REPORT_FIELDS,
+  needsAttention,
+  pruneReportState,
+  recordReports,
+  selectReportsToNotify,
+} from "../container-sweep.js";
 import type { SweepDecision, ComposeProject } from "../../lib/container-sweep.js";
 
 /** A decision to tear one stack down, unless `action` says otherwise. */
@@ -64,5 +73,102 @@ describe("buildSweepPayload", () => {
 
     expect(failed.embeds?.[0].color).toBe(0xff4444);
     expect(reported.embeds?.[0].color).toBe(0xffa000);
+  });
+});
+
+describe("describeReport", () => {
+  const stale = decision({
+    action: "report",
+    reason: "PRが無いまま 3 日以上残っている",
+    worktree: "/home/u/worktrees/repo/feat-x",
+  });
+
+  it("leads with the ticket, because that is how a reader recognises the work", () => {
+    const text = describeReport({
+      ...stale,
+      task: { id: "T-9", title: "名刺の取り込み", status: "Question", assignee: "A Person", url: "https://t/T-9" },
+    });
+
+    expect(text.split("\n")[0]).toBe("チケット: [T-9 名刺の取り込み](https://t/T-9) — Question / 担当 A Person");
+  });
+
+  it("says when no ticket claims the worktree, rather than leaving the line out", () => {
+    expect(describeReport({ ...stale, task: null })).toContain("見つからない");
+  });
+
+  it("says that the containers are already stopped when none is running", () => {
+    const text = describeReport({ ...stale, project: { ...stale.project, running: 0 } });
+
+    expect(text).toContain("3 件はすべて停止済み");
+  });
+
+  it("tells the reader what resolves it, including the exact teardown command", () => {
+    const text = describeReport(stale);
+
+    expect(text).toContain("確認すること:");
+    expect(text).toContain("docker compose -p repo-abcd1234 down --volumes");
+  });
+
+  it("gives gh-specific advice when the PR lookup failed", () => {
+    expect(adviceFor(decision({ action: "report", reason: "PRの状態を引けなかった: boom" }))).toContain("gh auth status");
+  });
+});
+
+describe("buildSweepPayload with tasks", () => {
+  it("titles the field with the ticket id when one is known", () => {
+    const d = decision({
+      action: "report",
+      reason: "PRが無いまま 3 日以上残っている",
+      task: { id: "T-9", title: "x", status: "Todo", assignee: null, url: "https://t/T-9" },
+    });
+
+    expect(buildSweepPayload([], [d], [], false).embeds?.[0].fields?.[0].name).toBe("⚠️ 要確認: T-9");
+  });
+});
+
+describe("selectReportsToNotify", () => {
+  const now = new Date("2026-08-25T12:00:00Z");
+  const DAY = 24 * 60 * 60 * 1000;
+  const stale = decision({ action: "report", reason: "PRが無いまま 3 日以上残っている" });
+
+  it("sends what has never been sent", () => {
+    expect(selectReportsToNotify([stale], { reported: {} }, now, DAY)).toHaveLength(1);
+  });
+
+  it("holds a line that went out less than the interval ago", () => {
+    const state = recordReports({ reported: {} }, [stale], new Date(now.getTime() - DAY / 2));
+
+    expect(selectReportsToNotify([stale], state, now, DAY)).toHaveLength(0);
+  });
+
+  it("sends again once the interval has passed", () => {
+    const state = recordReports({ reported: {} }, [stale], new Date(now.getTime() - DAY));
+
+    expect(selectReportsToNotify([stale], state, now, DAY)).toHaveLength(1);
+  });
+
+  it("sends at once when the reason changed, because the situation did", () => {
+    const state = recordReports({ reported: {} }, [decision({ action: "report", reason: "PRの状態を引けなかった: x" })], now);
+
+    expect(selectReportsToNotify([stale], state, now, DAY)).toHaveLength(1);
+  });
+
+  it("forgets a project once it is no longer undecidable", () => {
+    const state = recordReports({ reported: {} }, [stale], now);
+
+    expect(pruneReportState(state, []).reported).toEqual({});
+    expect(pruneReportState(state, [stale]).reported).toHaveProperty("repo-abcd1234");
+  });
+});
+
+describe("buildSweepPayload with more reports than fit", () => {
+  it("spells out MAX_REPORT_FIELDS of them and counts the rest", () => {
+    const many = Array.from({ length: MAX_REPORT_FIELDS + 2 }, (_, i) =>
+      decision({ action: "report", reason: "PRが無いまま 3 日以上残っている", project: { ...decision().project, project: `p${i}` } }),
+    );
+    const fields = buildSweepPayload([], many, [], false).embeds?.[0].fields ?? [];
+
+    expect(fields).toHaveLength(MAX_REPORT_FIELDS + 1);
+    expect(fields[MAX_REPORT_FIELDS].value).toContain("あと 2 件");
   });
 });

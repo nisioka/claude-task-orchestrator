@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_SWEEP_OPTIONS,
   decideProject,
+  findTaskForWorktree,
   gatherContext,
   groupByProject,
   parseContainerRows,
@@ -13,6 +14,7 @@ import {
   type PullRequestState,
   type SweepIO,
 } from "../container-sweep.js";
+import type { Task } from "../tasks/types.js";
 
 const NOW = new Date("2026-08-25T12:00:00Z");
 
@@ -325,5 +327,60 @@ describe("gatherContext", () => {
       }),
     );
     expect(cwd).toBe(WORKTREE);
+  });
+});
+
+describe("findTaskForWorktree", () => {
+  const task = (over: Partial<Task> = {}): Task => ({
+    id: "T-1",
+    title: "a task",
+    status: "In Progress",
+    group: "work",
+    labels: [],
+    assignee: { id: "u1", name: "Someone" },
+    url: "https://tasks.example/T-1",
+    updatedAt: "2026-08-20T00:00:00Z",
+    dueDate: null,
+    priority: null,
+    description: `orchestrator:begin\nworktree: ${WORKTREE}\norchestrator:end\n\nbody`,
+    ...over,
+  });
+
+  it("names the task whose header claims the worktree", () => {
+    const found = findTaskForWorktree([task()], WORKTREE);
+
+    expect(found).toEqual({
+      id: "T-1",
+      title: "a task",
+      status: "In Progress",
+      assignee: "Someone",
+      url: "https://tasks.example/T-1",
+    });
+  });
+
+  it("matches a header written with ~ or a trailing slash", () => {
+    const home = process.env.HOME ?? "";
+    const tasks = [task({ description: `orchestrator:begin\nworktree: ~/wt/x/\norchestrator:end` })];
+
+    expect(findTaskForWorktree(tasks, `${home}/wt/x`)?.id).toBe("T-1");
+  });
+
+  it("prefers the most recently updated when several claim the same worktree", () => {
+    const tasks = [
+      task({ id: "old", updatedAt: "2026-08-01T00:00:00Z" }),
+      task({ id: "new", updatedAt: "2026-08-21T00:00:00Z" }),
+    ];
+
+    expect(findTaskForWorktree(tasks, WORKTREE)?.id).toBe("new");
+  });
+
+  it("returns null when nothing claims it, and ignores tasks without a header", () => {
+    const tasks = [task({ description: "no header here" }), task({ description: undefined })];
+
+    expect(findTaskForWorktree(tasks, WORKTREE)).toBeNull();
+  });
+
+  it("does not skip closed tasks: a finished ticket is the case worth naming", () => {
+    expect(findTaskForWorktree([task({ status: "Done" })], WORKTREE)?.status).toBe("Done");
   });
 });
