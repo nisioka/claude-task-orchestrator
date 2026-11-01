@@ -11,12 +11,17 @@
  * See `src/lib/container-sweep.ts` for the decision rules.
  */
 
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { loadCoreConfig } from "../lib/core-config.js";
 import { sendNotifications } from "../lib/notification.js";
-import type { DiscordEmbed, DiscordPayload } from "../lib/types.js";
+import { createTaskProvider } from "../lib/tasks/factory.js";
+import { truncateFieldValue, type DiscordEmbed, type DiscordPayload } from "../lib/types.js";
 import {
   DEFAULT_SWEEP_OPTIONS,
   decideProject,
+  findTaskForWorktree,
   gatherContext,
   groupByProject,
   listContainers,
@@ -28,6 +33,33 @@ import {
 export interface ContainerSweepArgs extends SweepOptions {
   /** Decide and report, tear nothing down. */
   dryRun: boolean;
+  /**
+   * How long a `report` stays quiet after it has been sent once.
+   *
+   * A stack nobody can decide on stays undecidable for days, and the sweep runs
+   * hourly. Repeating the same line every hour does not make anyone act sooner;
+   * it teaches them that the channel repeats itself. Once a day is a reminder.
+   */
+  reportIntervalHours: number;
+  /** Where the sweep remembers what it has already reported. */
+  statePath: string;
+}
+
+export const DEFAULT_REPORT_INTERVAL_HOURS = 24;
+
+export function defaultStatePath(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.CONTAINER_SWEEP_STATE_PATH) return env.CONTAINER_SWEEP_STATE_PATH;
+  const stateDir = env.ORCHESTRATOR_STATE_DIR || join(homedir(), ".local/state/ai-orchestrator");
+  return join(stateDir, "container-sweep.json");
+}
+
+export function defaultContainerSweepArgs(): ContainerSweepArgs {
+  return {
+    ...DEFAULT_SWEEP_OPTIONS,
+    dryRun: false,
+    reportIntervalHours: DEFAULT_REPORT_INTERVAL_HOURS,
+    statePath: defaultStatePath(),
+  };
 }
 
 /**
@@ -37,7 +69,7 @@ export interface ContainerSweepArgs extends SweepOptions {
  * successful run that swept nothing — so it stops here instead.
  */
 export function parseContainerSweepArgs(argv: string[]): ContainerSweepArgs {
-  const args: ContainerSweepArgs = { ...DEFAULT_SWEEP_OPTIONS, dryRun: false };
+  const args = defaultContainerSweepArgs();
   for (const arg of argv) {
     if (arg === "--dry-run") {
       args.dryRun = true;
@@ -51,6 +83,11 @@ export function parseContainerSweepArgs(argv: string[]): ContainerSweepArgs {
     const report = arg.match(/^--report-after-days=(\d+(?:\.\d+)?)$/);
     if (report) {
       args.reportAfterDays = Number(report[1]);
+      continue;
+    }
+    const interval = arg.match(/^--report-interval-hours=(\d+(?:\.\d+)?)$/);
+    if (interval) {
+      args.reportIntervalHours = Number(interval[1]);
       continue;
     }
     throw new Error(`不明な引数: ${arg}`);
@@ -69,7 +106,7 @@ export function parseContainerSweepArgs(argv: string[]): ContainerSweepArgs {
  * back next run rather than being lost.
  */
 export async function runContainerSweep(
-  args: ContainerSweepArgs = { ...DEFAULT_SWEEP_OPTIONS, dryRun: false },
+  args: ContainerSweepArgs = defaultContainerSweepArgs(),
   now: Date = new Date(),
 ): Promise<void> {
   const projects = groupByProject(await listContainers());
@@ -110,12 +147,125 @@ export async function runContainerSweep(
 
   const torndown = reap.filter((d) => !failures.some((f) => f.decision === d));
 
-  if (!needsAttention(report, failures)) return;
+  if (!needsAttention(report, failures)) {
+    if (!args.dryRun) {
+      await saveReportState(args.statePath, pruneReportState(await loadReportState(args.statePath), report));
+    }
+    return;
+  }
 
   const config = loadCoreConfig();
-  await sendNotifications(config,
-    buildSweepPayload(torndown, report, failures, args.dryRun),
-  );
+  if (report.length > 0) await attachTasks(report, config);
+
+  const previous = await loadReportState(args.statePath);
+  const due = selectReportsToNotify(report, previous, now, args.reportIntervalHours * HOUR_MS);
+  const held = report.length - due.length;
+  if (held > 0) {
+    console.log(`  要確認 ${held} 件は前回の通知から ${args.reportIntervalHours} 時間未満のため通知しない`);
+  }
+
+  if (due.length === 0 && failures.length === 0) {
+    if (!args.dryRun) await saveReportState(args.statePath, pruneReportState(previous, report));
+    return;
+  }
+
+  const payload = buildSweepPayload(torndown, due, failures, args.dryRun);
+  if (args.dryRun) {
+    // A rehearsal shows what would be said; it sends nothing and remembers nothing.
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+  await sendNotifications(config, payload);
+  await saveReportState(args.statePath, recordReports(pruneReportState(previous, report), due, now));
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * Name the task behind each undecidable stack.
+ *
+ * Only `report` pays for the task-source round trip, and a failure to reach
+ * the task source must not stop the sweep: the stack is still named by its
+ * worktree and branch, which is what the reader had before.
+ */
+async function attachTasks(
+  report: SweepDecision[],
+  config: ReturnType<typeof loadCoreConfig>,
+): Promise<void> {
+  try {
+    const tasks = await createTaskProvider(config).list({ withDescription: true });
+    for (const d of report) {
+      d.task = d.worktree ? findTaskForWorktree(tasks, d.worktree) : null;
+    }
+  } catch (err) {
+    console.error(`  タスクの照合に失敗（通知には worktree とブランチだけ載せる）: ${(err as Error).message.split("\n")[0]}`);
+  }
+}
+
+// ─── Report state (pure where it can be) ────────────────────────────
+
+/** Per project: what was last said about it, and when. */
+export interface ReportState {
+  reported: Record<string, { reason: string; at: string }>;
+}
+
+const EMPTY_STATE: ReportState = { reported: {} };
+
+/**
+ * The reports worth sending this run: never sent, sent long enough ago, or
+ * saying something different from last time. A changed reason is a changed
+ * situation — `gh` recovering, a PR appearing — and the reader should hear
+ * about it even if the previous line went out an hour ago.
+ */
+export function selectReportsToNotify(
+  report: readonly SweepDecision[],
+  state: ReportState,
+  now: Date,
+  intervalMs: number,
+): SweepDecision[] {
+  return report.filter((d) => {
+    const last = state.reported[d.project.project];
+    if (!last) return true;
+    if (last.reason !== d.reason) return true;
+    return now.getTime() - new Date(last.at).getTime() >= intervalMs;
+  });
+}
+
+/** Forget projects that are no longer undecidable, so a stack that comes back later is reported afresh. */
+export function pruneReportState(state: ReportState, report: readonly SweepDecision[]): ReportState {
+  const live = new Set(report.map((d) => d.project.project));
+  const reported: ReportState["reported"] = {};
+  for (const [project, entry] of Object.entries(state.reported)) {
+    if (live.has(project)) reported[project] = entry;
+  }
+  return { reported };
+}
+
+export function recordReports(state: ReportState, sent: readonly SweepDecision[], now: Date): ReportState {
+  const reported = { ...state.reported };
+  for (const d of sent) reported[d.project.project] = { reason: d.reason, at: now.toISOString() };
+  return { reported };
+}
+
+async function loadReportState(path: string): Promise<ReportState> {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<ReportState>;
+    return { reported: parsed.reported ?? {} };
+  } catch {
+    // Absent or unreadable: the worst outcome is one extra notification.
+    return EMPTY_STATE;
+  }
+}
+
+async function saveReportState(path: string, state: ReportState): Promise<void> {
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  } catch (err) {
+    // The sweep itself succeeded. Losing the record only brings the next
+    // reminder forward; it never stops or repeats a teardown.
+    console.error(`  通知の記録を書けませんでした: ${path} — ${(err as Error).message.split("\n")[0]}`);
+  }
 }
 
 // ─── Notification (pure) ─────────────────────────────────────────────
@@ -134,6 +284,61 @@ export function needsAttention(
   failures: readonly unknown[],
 ): boolean {
   return report.length > 0 || failures.length > 0;
+}
+
+/**
+ * One undecidable stack, written so the reader can act without opening a
+ * terminal first: which ticket it belongs to, what state it is in, and what
+ * resolves it. The ticket comes first because that is how a person recognises
+ * the work; the compose project name means nothing to them.
+ */
+export function describeReport(d: SweepDecision): string {
+  const lines: string[] = [];
+
+  if (d.task) {
+    const who = d.task.assignee ? `担当 ${d.task.assignee}` : "担当なし";
+    lines.push(`チケット: [${d.task.id} ${d.task.title}](${d.task.url}) — ${d.task.status} / ${who}`);
+  } else if (d.task === null) {
+    lines.push("チケット: この worktree を説明文に持つタスクは見つからない");
+  }
+
+  const { containers, running } = d.project;
+  const state =
+    running === 0
+      ? `コンテナ ${containers} 件はすべて停止済み（削除されず残っている）`
+      : running === containers
+        ? `コンテナ ${containers} 件が起動中`
+        : `コンテナ ${containers} 件中 ${running} 件が起動中`;
+  lines.push(`状態: ${d.reason}。${state}`);
+
+  if (d.branch) lines.push(`ブランチ: \`${d.branch}\``);
+  lines.push(`worktree: \`${d.worktree ?? d.project.workingDir}\``);
+  lines.push(`確認すること: ${adviceFor(d)}`);
+
+  return truncateFieldValue(lines.join("\n"));
+}
+
+/** What would make the next run decide this one on its own. */
+export function adviceFor(d: SweepDecision): string {
+  const down = `\`docker compose -p ${d.project.project} down --volumes\``;
+  const reason = d.reason;
+
+  if (reason.startsWith("PRが無いまま")) {
+    return (
+      "作業を続けるなら何もしなくてよい（PR ができれば次回から判定できる）。" +
+      `終わっているなら worktree を消す（次の巡回で停止する）か、${down} を実行する`
+    );
+  }
+  if (reason.startsWith("PRの状態を引けなかった")) {
+    return "worktree で `gh auth status` と `gh pr list` が通るか確かめる。直れば次の巡回で判定し直す";
+  }
+  if (reason.startsWith("detached HEAD")) {
+    return `ブランチを checkout すれば次の巡回で判定できる。不要なら ${down} を実行する`;
+  }
+  if (reason.startsWith("git の作業ツリーの外")) {
+    return `手で立てたスタック。使っていなければ ${down} を実行する`;
+  }
+  return `判定に使える証拠が無い。不要なら ${down} を実行する`;
 }
 
 /**
@@ -160,9 +365,12 @@ export function buildSweepPayload(
 
   for (const d of report.slice(0, 5)) {
     fields.push({
-      name: `⚠️ 要確認: ${d.project.project}`,
-      value: `${d.reason}\n\`${d.branch ?? d.project.workingDir}\``,
+      name: `⚠️ 要確認: ${d.task ? d.task.id : d.project.project}`,
+      value: describeReport(d),
     });
+  }
+  if (report.length > 5) {
+    fields.push({ name: "ほか", value: `要確認があと ${report.length - 5} 件。cron のログに全件ある` });
   }
   for (const f of failures.slice(0, 5)) {
     fields.push({

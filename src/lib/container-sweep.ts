@@ -43,6 +43,9 @@ import { promisify } from "node:util";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { readHeader } from "./tasks/header.js";
+import type { Task } from "./tasks/types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -107,6 +110,20 @@ export interface SweepDecision {
   worktree?: string;
   branch?: string;
   pr?: PullRequestState;
+  /**
+   * The task whose header names this worktree. `null` when the lookup ran and
+   * found none; absent when it was never attempted (only `report` pays for it).
+   */
+  task?: SweepTaskRef | null;
+}
+
+/** What a reader needs to recognise the task behind a stack, nothing more. */
+export interface SweepTaskRef {
+  id: string;
+  title: string;
+  status: string;
+  assignee: string | null;
+  url: string;
 }
 
 /** Everything gathered about one compose project before deciding. */
@@ -227,7 +244,7 @@ export function decideProject(
       ? {
           ...common,
           action: "report",
-          reason: `PRが無いまま ${opts.reportAfterDays} 日以上起動している`,
+          reason: `PRが無いまま ${opts.reportAfterDays} 日以上残っている`,
         }
       : { ...common, action: "keep", reason: "PRがまだ無い（作業中）" };
   }
@@ -532,4 +549,40 @@ export async function gatherContext(
       prLookupError: (err as Error).message.split("\n")[0],
     };
   }
+}
+
+// ─── Task lookup ────────────────────────────────────────────────────
+
+/** Compare worktree paths as the header writes them and as git reports them. */
+export function normalizeWorktreePath(path: string): string {
+  const expanded = path.startsWith("~/") ? `${homedir()}/${path.slice(2)}` : path;
+  return expanded.replace(/\/+$/, "");
+}
+
+/**
+ * The task whose description header claims this worktree.
+ *
+ * The header is the one place a task and a directory are written down
+ * together, so it is the only chain from a container back to a ticket that
+ * survives the session that started both. Closed tasks count: a stack left by
+ * a finished ticket is exactly the case the reader needs named. When several
+ * tasks name the same worktree the most recently updated one is the one still
+ * being worked, so it wins.
+ */
+export function findTaskForWorktree(tasks: readonly Task[], worktree: string): SweepTaskRef | null {
+  const wanted = normalizeWorktreePath(worktree);
+  let best: Task | null = null;
+  for (const task of tasks) {
+    const claimed = readHeader(task.description).worktree;
+    if (!claimed || normalizeWorktreePath(claimed) !== wanted) continue;
+    if (!best || task.updatedAt > best.updatedAt) best = task;
+  }
+  if (!best) return null;
+  return {
+    id: best.id,
+    title: best.title,
+    status: best.status,
+    assignee: best.assignee?.name ?? null,
+    url: best.url,
+  };
 }
