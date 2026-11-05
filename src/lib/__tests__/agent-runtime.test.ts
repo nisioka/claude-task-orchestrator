@@ -369,6 +369,13 @@ describe("parseHeartbeatTail", () => {
   const line = (at: string) =>
     JSON.stringify({ at, dispatched: ["TASK-1"], handedToHuman: [], note: "巡回" });
 
+  it("reads the idle mark only when it is exactly true", () => {
+    const at = "2026-08-06T00:20:00.000Z";
+    expect(parseHeartbeatTail(JSON.stringify({ at, idle: true }))?.idle).toBe(true);
+    expect(parseHeartbeatTail(JSON.stringify({ at, idle: "true" }))?.idle).toBeUndefined();
+    expect(parseHeartbeatTail(JSON.stringify({ at }))?.idle).toBeUndefined();
+  });
+
   it("reads only the last line", () => {
     const raw = [line("2026-08-06T00:00:00.000Z"), line("2026-08-06T00:20:00.000Z")].join("\n");
 

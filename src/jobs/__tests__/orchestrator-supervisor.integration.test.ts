@@ -6,6 +6,7 @@ import type { DiscordPayload } from "../../lib/types.js";
 import { listFakeAgentPids, reapFakeAgentsSince } from "../../lib/__tests__/fake-agent-reaper.js";
 import { ORCHESTRATOR_SESSION_NAME } from "../../lib/orchestrator-config.js";
 import { createServer, type Server } from "node:net";
+import type { GateOutcome } from "../orchestrator-gate.js";
 
 /**
  * Exercises the supervisor against the fake agent, spending no model usage.
@@ -203,12 +204,16 @@ async function writeHeartbeat(at: Date): Promise<void> {
 async function run(
   options: { forceRestart?: boolean } = {},
   prerequisites = { satisfied: true, problems: [] as string[] },
+  gate: () => Promise<GateOutcome> = async () => {
+    throw new Error("ORCHESTRATOR_IDLE_EXIT が無効なのにゲートが呼ばれた");
+  },
 ): Promise<void> {
   const { runOrchestratorSupervisor } = await import("../orchestrator-supervisor.js");
   await runOrchestratorSupervisor(options, {
     checkPrerequisites: async () => prerequisites,
     // タスクソースへ届く呼び出しなので、ここでは何もしない。
     handBackGroupMismatches: async () => {},
+    consultGate: gate,
   });
 }
 
@@ -540,6 +545,118 @@ describe("runOrchestratorSupervisor --restart", () => {
 
   it("starts a session when none is running, flag or not", async () => {
     await run({ forceRestart: true });
+
+    expect((await readRegistry()).filter((a) => a.name === "ai-orchestrator")).toHaveLength(1);
+  });
+});
+
+describe("runOrchestratorSupervisor under ORCHESTRATOR_IDLE_EXIT", () => {
+  beforeEach(() => {
+    vi.stubEnv("ORCHESTRATOR_IDLE_EXIT", "1");
+  });
+
+  const skip = async (): Promise<GateOutcome> => ({ action: "exit", line: "巡回ゲート: exit — 変化なし" });
+  const work = async (): Promise<GateOutcome> => ({ action: "patrol", line: "巡回ゲート: patrol — AIのボールが変化" });
+
+  async function writeIdleHeartbeat(at: Date): Promise<void> {
+    await writeFile(
+      heartbeatPath,
+      `${JSON.stringify({ at: at.toISOString(), dispatched: [], handedToHuman: [], note: "n", gate: true, idle: true })}\n`,
+      "utf-8",
+    );
+  }
+
+  it("starts nothing and says nothing while the gate finds no work", async () => {
+    await run({}, undefined, skip);
+
+    expect(await readRegistry()).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it("starts a session in silence when the gate finds work", async () => {
+    await run({}, undefined, work);
+
+    const orchestrators = (await readRegistry()).filter((a) => a.name === "ai-orchestrator");
+    expect(orchestrators).toHaveLength(1);
+    expect(await recordedSessionId()).toBe(orchestrators[0].sessionId);
+    expect(sent).toEqual([]);
+  });
+
+  it("still speaks when it starts one with the residency prerequisites unmet", async () => {
+    await run({}, { satisfied: false, problems: ["linger が無効"] }, work);
+
+    expect(JSON.stringify(sent)).toContain("linger が無効");
+  });
+
+  it("puts down a session that marked itself idle, quietly", async () => {
+    await serveControlSocket();
+    await seedRegistry([{ sessionId: "idle-1" }]);
+    await writeIdleHeartbeat(new Date());
+
+    await run({}, undefined, skip);
+
+    expect((await readRegistry()).map((a) => a.sessionId)).not.toContain("idle-1");
+    expect(sent).toEqual([]);
+  });
+
+  it("does not take an idle exit for a stall, however long ago it was", async () => {
+    await serveControlSocket();
+    await seedRegistry([{ sessionId: "idle-2", startedAt: Date.now() - 10 * 3600 * 1000 }]);
+    await writeIdleHeartbeat(new Date(Date.now() - 3 * 1800 * 1000));
+
+    await run({}, undefined, skip);
+
+    expect(JSON.stringify(sent)).not.toContain("停滞");
+    expect(await readRegistry()).toEqual([]);
+  });
+
+  it("starts a fresh one at once if work arrived after the session stopped", async () => {
+    await serveControlSocket();
+    await seedRegistry([{ sessionId: "idle-3" }]);
+    await writeIdleHeartbeat(new Date());
+
+    await run({}, undefined, work);
+
+    const ids = (await readRegistry()).map((a) => a.sessionId);
+    expect(ids).not.toContain("idle-3");
+    expect(ids).toHaveLength(1);
+    expect(sent).toEqual([]);
+  });
+
+  it("says so, and starts nothing, when the idle session would not die", async () => {
+    let asked = false;
+    await seedRegistry([{ sessionId: "idle-4" }]);
+    await writeIdleHeartbeat(new Date());
+
+    await run({}, undefined, async () => {
+      asked = true;
+      return work();
+    });
+
+    expect(asked).toBe(false);
+    expect(JSON.stringify(sent)).toContain("idle-4");
+    expect((await readRegistry()).map((a) => a.sessionId)).toEqual(["idle-4"]);
+  });
+
+  it("leaves a patrolling session alone and does not ask the gate", async () => {
+    let asked = false;
+    await seedRegistry([{ sessionId: "busy-1" }]);
+    await writeHeartbeat(new Date());
+
+    await run({}, undefined, async () => {
+      asked = true;
+      return skip();
+    });
+
+    expect(asked).toBe(false);
+    expect((await readRegistry()).map((a) => a.sessionId)).toEqual(["busy-1"]);
+    expect(sent).toEqual([]);
+  });
+
+  it("starts a session on --restart without asking the gate", async () => {
+    await run({ forceRestart: true }, undefined, async () => {
+      throw new Error("--restart なのにゲートが呼ばれた");
+    });
 
     expect((await readRegistry()).filter((a) => a.name === "ai-orchestrator")).toHaveLength(1);
   });

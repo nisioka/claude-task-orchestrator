@@ -15,6 +15,7 @@ import {
 /** Env vars this module reads; cleared before each test for hermetic defaults. */
 const ORCHESTRATOR_ENV = [
   "ORCHESTRATOR_STATE_DIR",
+  "ORCHESTRATOR_FULL_PATROL_SECONDS",
   "ORCHESTRATOR_SESSION_ID_PATH",
   "ORCHESTRATOR_HEARTBEAT_PATH",
   "ORCHESTRATOR_INSTRUCTION_PATH",
@@ -33,6 +34,7 @@ const ORCHESTRATOR_ENV = [
   "ORCHESTRATOR_CHILD_CONTEXT_LIMIT_TOKENS",
   "ORCHESTRATOR_CLAUDE_BIN",
   "ORCHESTRATOR_GROUP",
+  "ORCHESTRATOR_IDLE_EXIT",
   "CLAUDE_CONFIG_DIR",
 ];
 
@@ -417,5 +419,31 @@ describe("loadOrchestratorConfig group and account", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", "/var/lib/claude-second");
 
     expect(loadOrchestratorConfig().claudeConfigDir).toBe("/var/lib/claude-second");
+  });
+});
+
+describe("ORCHESTRATOR_IDLE_EXIT", () => {
+  it("is off unless set", () => {
+    expect(loadOrchestratorConfig().idleExit).toBe(false);
+  });
+
+  it("reads 1 as on and 0 as off", () => {
+    vi.stubEnv("ORCHESTRATOR_IDLE_EXIT", "1");
+    expect(loadOrchestratorConfig().idleExit).toBe(true);
+    vi.stubEnv("ORCHESTRATOR_IDLE_EXIT", "0");
+    expect(loadOrchestratorConfig().idleExit).toBe(false);
+  });
+
+  it("defaults the forced patrol to a day, since each one is a cold start", () => {
+    expect(loadOrchestratorConfig().fullPatrolSeconds).toBe(3600);
+    vi.stubEnv("ORCHESTRATOR_IDLE_EXIT", "1");
+    expect(loadOrchestratorConfig().fullPatrolSeconds).toBe(86_400);
+    vi.stubEnv("ORCHESTRATOR_FULL_PATROL_SECONDS", "7200");
+    expect(loadOrchestratorConfig().fullPatrolSeconds).toBe(7200);
+  });
+
+  it("refuses anything else rather than guess", () => {
+    vi.stubEnv("ORCHESTRATOR_IDLE_EXIT", "yes");
+    expect(() => loadOrchestratorConfig()).toThrow("ORCHESTRATOR_IDLE_EXIT");
   });
 });

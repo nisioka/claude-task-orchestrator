@@ -13,6 +13,8 @@ import {
   reconcileDuplicates,
   assessRecycle,
   buildRecyclePayload,
+  assessIdle,
+  buildIdleExitFailedPayload,
 } from "../orchestrator-supervisor.js";
 import type { HeartbeatRecord, AgentSummary } from "../../lib/agent-runtime.js";
 import type { OrchestratorConfig } from "../../lib/orchestrator-config.js";
@@ -617,5 +619,64 @@ describe("reconcileDuplicates", () => {
 
     expect(h.killed).toEqual([]);
     expect(h.sent.join()).toContain("old");
+  });
+});
+
+// ─── assessIdle ─────────────────────────────────────────────────────
+
+describe("assessIdle", () => {
+  const STARTED = NOW.getTime() - 3600 * 1000;
+  const idleBeat = (at: string): HeartbeatRecord => ({ ...heartbeat(at), idle: true });
+  const idle = (overrides: Partial<Parameters<typeof assessIdle>[0]> = {}) =>
+    assessIdle({
+      idleExit: true,
+      forceRestart: false,
+      sessionUp: true,
+      startedAt: STARTED,
+      lastHeartbeat: idleBeat("2026-08-06T11:50:00.000Z"),
+      ...overrides,
+    });
+
+  it("does nothing new when idle exit is off", () => {
+    expect(idle({ idleExit: false })).toEqual({ kind: "off" });
+    expect(idle({ idleExit: false, sessionUp: false })).toEqual({ kind: "off" });
+  });
+
+  it("puts down a session that marked itself idle", () => {
+    expect(idle()).toEqual({ kind: "put-down" });
+  });
+
+  it("asks the gate when no session is up", () => {
+    expect(idle({ sessionUp: false })).toEqual({ kind: "ask-gate" });
+    expect(idle({ sessionUp: false, lastHeartbeat: null })).toEqual({ kind: "ask-gate" });
+  });
+
+  it("leaves a patrolling session to the usual checks", () => {
+    expect(idle({ lastHeartbeat: heartbeat("2026-08-06T11:50:00.000Z") })).toEqual({ kind: "busy" });
+    expect(idle({ lastHeartbeat: null })).toEqual({ kind: "busy" });
+  });
+
+  it("ignores an idle mark left by the session before this one", () => {
+    // Started by the gate finding work: it has not been idle yet.
+    expect(idle({ lastHeartbeat: idleBeat("2026-08-06T10:00:00.000Z") })).toEqual({ kind: "busy" });
+  });
+
+  it("does not trust the mark when the start time is unknown", () => {
+    // The mark may be the predecessor's, and this session may be in its first patrol.
+    expect(idle({ startedAt: null })).toEqual({ kind: "busy" });
+  });
+
+  it("lets --restart through, so the human gets the session they asked for", () => {
+    expect(idle({ forceRestart: true })).toEqual({ kind: "off" });
+    expect(idle({ forceRestart: true, sessionUp: false })).toEqual({ kind: "off" });
+  });
+});
+
+describe("buildIdleExitFailedPayload", () => {
+  it("names the session and the risk of running twice", () => {
+    const text = JSON.stringify(buildIdleExitFailedPayload("s-1"));
+    expect(text).toContain("s-1");
+    expect(text).toContain("二重");
+    expect(text).toContain("claude agents");
   });
 });
