@@ -15,6 +15,7 @@ import {
 /** Env vars this module reads; cleared before each test for hermetic defaults. */
 const ORCHESTRATOR_ENV = [
   "ORCHESTRATOR_STATE_DIR",
+  "ORCHESTRATOR_FULL_PATROL_SECONDS",
   "ORCHESTRATOR_SESSION_ID_PATH",
   "ORCHESTRATOR_HEARTBEAT_PATH",
   "ORCHESTRATOR_INSTRUCTION_PATH",

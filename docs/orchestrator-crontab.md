@@ -177,7 +177,12 @@ and exits when the last client disconnects.
 止まっている間の強制巡回はコールドスタートそのものなので、1時間のままだと仕事の無い日も
 毎時セッションを起こしてしまう。1日ぶんは、ゲートの比較に変化が現れなかったときの保険として残す。
 
-状態ディレクトリは系統ごとに別なので、先に作っておく。無いとログのリダイレクト先が無く、
+系統が1つだけなら、冒頭の cron 行に `ORCHESTRATOR_IDLE_EXIT=1` を足すだけでよい。
+
+系統を分けて、その一方だけで有効にするなら、`docs/multiple-accounts.md` のとおり
+`CLAUDE_CONFIG_DIR` と `ORCHESTRATOR_STATE_DIR` を系統ごとに分ける。supervisor は常駐セッションを
+名前で照合して余分なものを終了させるので、同じ設定ディレクトリを共有すると、もう一方の系統の
+セッションを落とし合う。状態ディレクトリは先に作っておく。無いとログのリダイレクト先が無く、
 cron の行そのものが起動しない。
 
 ```bash
@@ -185,7 +190,7 @@ mkdir -p ~/.local/state/ai-orchestrator-b
 ```
 
 ```cron
-*/20 * * * * flock -n $HOME/.local/state/ai-orchestrator-b/supervisor.lock -c 'cd /path/to/repo && ORCHESTRATOR_IDLE_EXIT=1 ORCHESTRATOR_STATE_DIR=$HOME/.local/state/ai-orchestrator-b npx tsx src/index.ts orchestrator-supervisor' >> $HOME/.local/state/ai-orchestrator-b/supervisor.log 2>&1
+*/20 * * * * flock -n $HOME/.local/state/ai-orchestrator-b/supervisor.lock -c 'cd /path/to/repo && CLAUDE_CONFIG_DIR=$HOME/.claude-b ORCHESTRATOR_GROUP=private ORCHESTRATOR_IDLE_EXIT=1 ORCHESTRATOR_STATE_DIR=$HOME/.local/state/ai-orchestrator-b npx tsx src/index.ts orchestrator-supervisor' >> $HOME/.local/state/ai-orchestrator-b/supervisor.log 2>&1
 ```
 
 `orchestrator-status` とダッシュボードは、止まっている間は「待機中」と表示する。
