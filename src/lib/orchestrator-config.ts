@@ -99,6 +99,10 @@ export interface OrchestratorConfig {
    * cannot see** (messages read through the session's own tools): that input
    * only arrives through the session's periodic full patrol, which stops with
    * the session.
+   *
+   * It also moves the default of `fullPatrolSeconds` from an hour to a day.
+   * With the session down, a forced patrol is a cold start; the period stays
+   * only as a backstop for a change the gate's snapshot failed to show.
    */
   idleExit: boolean;
 
@@ -224,7 +228,12 @@ export function loadOrchestratorConfig(): OrchestratorConfig {
     targetIntervalSeconds: parsePositiveInt("ORCHESTRATOR_TARGET_INTERVAL_SECONDS", 1200),
     maxIntervalSeconds: parsePositiveInt("ORCHESTRATOR_MAX_INTERVAL_SECONDS", 1800),
     startupGraceSeconds: parsePositiveInt("ORCHESTRATOR_STARTUP_GRACE_SECONDS", 1800),
-    fullPatrolSeconds: parsePositiveInt("ORCHESTRATOR_FULL_PATROL_SECONDS", 3600),
+    // Under idle exit a forced patrol is a cold start, so the hourly default
+    // would start a session every hour on a day with no work at all.
+    fullPatrolSeconds: parsePositiveInt(
+      "ORCHESTRATOR_FULL_PATROL_SECONDS",
+      parseFlag("ORCHESTRATOR_IDLE_EXIT") ? 86_400 : 3600,
+    ),
     idleExit: parseFlag("ORCHESTRATOR_IDLE_EXIT"),
 
     maxSessionContextTokens: parseOptionalPositiveInt(

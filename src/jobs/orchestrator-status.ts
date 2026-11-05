@@ -258,11 +258,12 @@ export function renderAgent(
  * The session wrote its own idle mark, so its silence is an exit, not a stall.
  *
  * A mark from before the session started belongs to its predecessor — the same
- * reading the supervisor makes in `assessIdle`.
+ * reading the supervisor makes in `assessIdle`. Without a start time the mark
+ * cannot be tied to this session, so it does not count.
  */
 export function isIdleExit(agent: AgentSummary, heartbeat: HeartbeatRecord | null): boolean {
   if (heartbeat?.idle !== true) return false;
-  if (agent.startedAt === null) return true;
+  if (agent.startedAt === null) return false;
   const at = new Date(heartbeat.at).getTime();
   return !Number.isNaN(at) && at >= agent.startedAt;
 }
@@ -279,10 +280,16 @@ export function renderOrchestrator(
     if (heartbeat?.idle) {
       // ORCHESTRATOR_IDLE_EXIT: down on purpose. Saying "stopped" here would
       // read as a fault on every quiet day.
-      return [
+      const lines = [
         "  待機中（仕事が無いため止めています。仕事が来たら orchestrator-supervisor が起動します）",
         `  最終確認: ${formatAge(heartbeat.at, now)}前`,
       ];
+      // While down, the supervisor runs the gate itself and each skip renews
+      // the mark. An old one means nobody is checking any more.
+      if (isHeartbeatStale(heartbeat, now, maxIntervalSeconds)) {
+        lines.push("  ⚠ 確認が止まっています。orchestrator-supervisor の cron が動いているか確かめてください");
+      }
+      return lines;
     }
     return [
       "  停止しています。次回の orchestrator-supervisor の実行で起動されます。",

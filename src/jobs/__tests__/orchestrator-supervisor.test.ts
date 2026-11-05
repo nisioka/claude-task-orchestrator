@@ -661,8 +661,9 @@ describe("assessIdle", () => {
     expect(idle({ lastHeartbeat: idleBeat("2026-08-06T10:00:00.000Z") })).toEqual({ kind: "busy" });
   });
 
-  it("trusts the mark when the start time is unknown", () => {
-    expect(idle({ startedAt: null })).toEqual({ kind: "put-down" });
+  it("does not trust the mark when the start time is unknown", () => {
+    // The mark may be the predecessor's, and this session may be in its first patrol.
+    expect(idle({ startedAt: null })).toEqual({ kind: "busy" });
   });
 
   it("lets --restart through, so the human gets the session they asked for", () => {

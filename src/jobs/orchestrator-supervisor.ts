@@ -181,7 +181,10 @@ export type IdleVerdict =
  *
  * The mark only counts if this session wrote it. One written before the
  * session started belongs to its predecessor — a session started by
- * `--restart`, or by the gate finding work, has not been idle yet.
+ * `--restart`, or by the gate finding work, has not been idle yet. When the
+ * start time is unknown the mark is not trusted either: leaving an idle
+ * session to the usual checks costs a restart, putting down a working one
+ * costs the work.
  *
  * `--restart` overrides all of it: the human asked for a session, and one that
  * finds nothing will put itself down at its first gate.
@@ -190,7 +193,9 @@ export function assessIdle(input: IdleInput): IdleVerdict {
   if (!input.idleExit || input.forceRestart) return { kind: "off" };
   if (!input.sessionUp) return { kind: "ask-gate" };
   if (input.lastHeartbeat?.idle !== true) return { kind: "busy" };
-  if (input.startedAt === null) return { kind: "put-down" };
+  // Without a start time the mark cannot be tied to this session, and a
+  // session just started on work would be cut off in its first patrol.
+  if (input.startedAt === null) return { kind: "busy" };
   const at = new Date(input.lastHeartbeat.at).getTime();
   return !Number.isNaN(at) && at >= input.startedAt ? { kind: "put-down" } : { kind: "busy" };
 }

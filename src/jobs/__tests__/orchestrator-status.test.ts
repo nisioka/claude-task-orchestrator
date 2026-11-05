@@ -294,6 +294,15 @@ describe("renderOrchestrator", () => {
     expect(lines).toContain("待機中");
     expect(lines).toContain("20分");
     expect(lines).not.toContain("停止しています");
+    expect(lines).not.toContain("確認が止まっています");
+  });
+
+  it("warns when the idle mark has not been renewed", () => {
+    // While down, every supervisor run renews the mark; three hours of silence means cron stopped.
+    const lines = renderOrchestrator(null, { ...beat("2026-08-06T09:00:00.000Z"), idle: true }, NOW).join("\n");
+
+    expect(lines).toContain("待機中");
+    expect(lines).toContain("確認が止まっています");
   });
 
   it("does not call a session that marked itself idle stalled", () => {

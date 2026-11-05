@@ -172,15 +172,26 @@ and exits when the last client disconnects.
 （メッセージの取り込みなど）は、セッションの定期的な強制巡回（`ORCHESTRATOR_FULL_PATROL_SECONDS`）
 だけが拾っている。セッションを止めると、それも止まる。入力がタスクソースだけの系統なら、
 巡回が反応するものはすべてゲートの比較対象（AIのボールの `ID|ステータス|更新日時`、予約投入、
-自分のオープンPR、子エージェント）に現れる。その場合は強制巡回も要らないので、
-`ORCHESTRATOR_FULL_PATROL_SECONDS=86400` のように大きくしておく。
+自分のオープンPR、子エージェント）に現れる。その場合は強制巡回も要らない。
+有効にすると `ORCHESTRATOR_FULL_PATROL_SECONDS` の既定は1時間から1日（86400）に変わる。
+止まっている間の強制巡回はコールドスタートそのものなので、1時間のままだと仕事の無い日も
+毎時セッションを起こしてしまう。1日ぶんは、ゲートの比較に変化が現れなかったときの保険として残す。
+
+状態ディレクトリは系統ごとに別なので、先に作っておく。無いとログのリダイレクト先が無く、
+cron の行そのものが起動しない。
+
+```bash
+mkdir -p ~/.local/state/ai-orchestrator-b
+```
 
 ```cron
-*/20 * * * * flock -n $HOME/.local/state/ai-orchestrator-b/supervisor.lock -c 'cd /path/to/repo && ORCHESTRATOR_IDLE_EXIT=1 ORCHESTRATOR_FULL_PATROL_SECONDS=86400 ORCHESTRATOR_STATE_DIR=$HOME/.local/state/ai-orchestrator-b npx tsx src/index.ts orchestrator-supervisor' >> $HOME/.local/state/ai-orchestrator-b/supervisor.log 2>&1
+*/20 * * * * flock -n $HOME/.local/state/ai-orchestrator-b/supervisor.lock -c 'cd /path/to/repo && ORCHESTRATOR_IDLE_EXIT=1 ORCHESTRATOR_STATE_DIR=$HOME/.local/state/ai-orchestrator-b npx tsx src/index.ts orchestrator-supervisor' >> $HOME/.local/state/ai-orchestrator-b/supervisor.log 2>&1
 ```
 
 `orchestrator-status` とダッシュボードは、止まっている間は「待機中」と表示する。
-「停止しています」「巡回が止まっている可能性」とは表示しない。
+「停止しています」「巡回が止まっている可能性」とは表示しない。止まっている間も supervisor が
+ゲートを回すたびに印は更新されるので、最終確認が確認間隔上限の2倍より古ければ
+「確認が止まっています」と警告する。cron が止まっていると、仕事が来ても誰も起こさないため。
 
 ## 検証用コンテナの回収 (container-sweep)
 

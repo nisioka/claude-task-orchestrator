@@ -78,6 +78,8 @@ export interface StatusView {
     heartbeatStale: boolean;
     /** Under ORCHESTRATOR_IDLE_EXIT: the session is down, or about to be, because there is no work. */
     idle: boolean;
+    /** Down on purpose, but the supervisor has not checked for work in too long. */
+    idleStale: boolean;
   };
   children: AgentPanel[];
   /** The workflow's Wait status. Shown, but not counted as something the human has to act on. */
@@ -141,6 +143,12 @@ export function buildStatusView(snapshot: OrchestratorSnapshot): StatusView {
         snapshot.orchestrator !== null &&
         heartbeat !== null &&
         !isIdleExit(snapshot.orchestrator.agent, heartbeat) &&
+        isHeartbeatStale(heartbeat, snapshot.takenAt, snapshot.maxIntervalSeconds),
+      // Down on purpose, the supervisor's own gate renews the mark every run; an old one means
+      // nobody is checking for work any more.
+      idleStale:
+        snapshot.orchestrator === null &&
+        heartbeat?.idle === true &&
         isHeartbeatStale(heartbeat, snapshot.takenAt, snapshot.maxIntervalSeconds),
       idle:
         heartbeat !== null &&

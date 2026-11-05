@@ -163,6 +163,7 @@ function renderStatus(panel) {
         ? el("div", { class: "alert" }, `待機中（仕事が無いため止めています。仕事が来たら起動します）。最終確認 ${o.heartbeatAt ? `${age(o.heartbeatAt)}前` : "なし"}`)
         : el("div", { class: "alert bad" }, "停止しています。次回の orchestrator-supervisor で起動されます"),
     o.agent && o.idle ? el("div", { class: "alert" }, "手が空いたので、次回の orchestrator-supervisor で終了します") : null,
+    o.idleStale ? el("div", { class: "alert bad" }, "確認が止まっています。orchestrator-supervisor の cron が動いているか確かめてください") : null,
     o.heartbeatStale ? el("div", { class: "alert bad" }, "巡回が止まっている可能性があります。orchestrator-supervisor を実行してください") : null,
     o.agent?.contextOver ? el("div", { class: "alert warn" }, "文脈が上限に達しました。次回の supervisor で入れ替わります") : null);
 

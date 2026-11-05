@@ -125,11 +125,28 @@ describe("buildStatusView under ORCHESTRATOR_IDLE_EXIT", () => {
     state: "working",
   };
   const idleBeat = { at: "2026-10-28T01:00:00Z", dispatched: [], handedToHuman: [], note: "n", idle: true };
+  const freshIdleBeat = { ...idleBeat, at: "2026-10-28T02:40:00Z" };
 
   it("shows a stopped orchestrator with an idle mark as waiting", () => {
-    const view = buildStatusView(snapshot({ heartbeat: idleBeat }));
+    const view = buildStatusView(snapshot({ heartbeat: freshIdleBeat }));
     expect(view.orchestrator.idle).toBe(true);
     expect(view.orchestrator.heartbeatStale).toBe(false);
+    expect(view.orchestrator.idleStale).toBe(false);
+  });
+
+  it("warns when nobody has renewed the idle mark", () => {
+    // Two hours with no supervisor run: work would arrive and nobody would start a session.
+    const view = buildStatusView(snapshot({ heartbeat: idleBeat }));
+    expect(view.orchestrator.idle).toBe(true);
+    expect(view.orchestrator.idleStale).toBe(true);
+  });
+
+  it("does not count the mark when the session's start time is unknown", () => {
+    const view = buildStatusView(
+      snapshot({ orchestrator: { agent: { ...agent, startedAt: null }, state: null, context: null }, heartbeat: idleBeat }),
+    );
+    expect(view.orchestrator.idle).toBe(false);
+    expect(view.orchestrator.heartbeatStale).toBe(true);
   });
 
   it("does not call a session that marked itself idle stale", () => {

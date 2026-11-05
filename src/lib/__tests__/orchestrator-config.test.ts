@@ -433,6 +433,14 @@ describe("ORCHESTRATOR_IDLE_EXIT", () => {
     expect(loadOrchestratorConfig().idleExit).toBe(false);
   });
 
+  it("defaults the forced patrol to a day, since each one is a cold start", () => {
+    expect(loadOrchestratorConfig().fullPatrolSeconds).toBe(3600);
+    vi.stubEnv("ORCHESTRATOR_IDLE_EXIT", "1");
+    expect(loadOrchestratorConfig().fullPatrolSeconds).toBe(86_400);
+    vi.stubEnv("ORCHESTRATOR_FULL_PATROL_SECONDS", "7200");
+    expect(loadOrchestratorConfig().fullPatrolSeconds).toBe(7200);
+  });
+
   it("refuses anything else rather than guess", () => {
     vi.stubEnv("ORCHESTRATOR_IDLE_EXIT", "yes");
     expect(() => loadOrchestratorConfig()).toThrow("ORCHESTRATOR_IDLE_EXIT");
