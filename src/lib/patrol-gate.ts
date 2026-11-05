@@ -17,6 +17,11 @@
  * full patrol at a fixed period. It is a ceiling, not a back-off: the wake-up
  * cadence itself never stretches, so work that arrives at the start of a day
  * is picked up on the next wake as before.
+ *
+ * Under `ORCHESTRATOR_IDLE_EXIT` a skip becomes an exit: the session stops
+ * instead of waiting, and the supervisor runs this same gate on its own tick to
+ * decide when to start the next one. That is only sound where the snapshot sees
+ * every input, which is why it is a per-instance setting and off by default.
  */
 
 import type { HeartbeatRecord } from "./agent-runtime.js";
@@ -152,23 +157,48 @@ export function decideGate(input: GateInput): GateDecision {
   };
 }
 
+/**
+ * What the session is told to do: `patrol`, `skip` (re-arm the wait), or `exit`
+ * (do not re-arm; the supervisor puts the session down and starts a new one
+ * when work arrives).
+ *
+ * `exit` is `skip` under `ORCHESTRATOR_IDLE_EXIT`. It is never the answer while
+ * a child is working, because that already forces `patrol`.
+ */
+export type GateAction = "patrol" | "skip" | "exit";
+
+export function gateAction(decision: GateDecision, idleExit: boolean): GateAction {
+  if (decision.verdict === "patrol") return "patrol";
+  return idleExit ? "exit" : "skip";
+}
+
 /** One line on stdout. The session reads only the first word after the colon. */
-export function formatDecision(decision: GateDecision, lastPatrol: HeartbeatRecord | null, now: Date): string {
+export function formatDecision(
+  decision: GateDecision,
+  lastPatrol: HeartbeatRecord | null,
+  now: Date,
+  idleExit = false,
+): string {
   if (decision.verdict === "patrol") {
     return `巡回ゲート: patrol — ${decision.reasons.join(" / ")}`;
   }
   const minutes = lastPatrol ? Math.floor((now.getTime() - new Date(lastPatrol.at).getTime()) / 60_000) : null;
-  return `巡回ゲート: skip — 変化なし${minutes === null ? "" : `（前回の巡回から${minutes}分）`}`;
+  const since = minutes === null ? "" : `（前回の巡回から${minutes}分）`;
+  return `巡回ゲート: ${gateAction(decision, idleExit)} — 変化なし${since}`;
 }
 
+/** Marks the gate lines that told the session to stop, so the supervisor can tell them from a stall. */
+export const IDLE_HEARTBEAT_MARKER = "idle";
+
 /** The heartbeat line written in place of a skipped patrol. */
-export function buildGateHeartbeat(now: Date): string {
+export function buildGateHeartbeat(now: Date, idleExit = false): string {
   return JSON.stringify({
     at: now.toISOString(),
     dispatched: [],
     handedToHuman: [],
-    note: "巡回ゲート: 変化なしのため省略",
+    note: idleExit ? "巡回ゲート: 変化なし、仕事が来るまで常駐を止める" : "巡回ゲート: 変化なしのため省略",
     [GATE_HEARTBEAT_MARKER]: true,
+    ...(idleExit ? { [IDLE_HEARTBEAT_MARKER]: true } : {}),
   });
 }
 

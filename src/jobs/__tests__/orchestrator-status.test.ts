@@ -288,6 +288,35 @@ describe("renderOrchestrator", () => {
     expect(renderOrchestrator(null, null, NOW).join("\n")).toContain("停止");
   });
 
+  it("reports an idle exit as waiting, not stopped", () => {
+    const lines = renderOrchestrator(null, { ...beat("2026-08-06T11:40:00.000Z"), idle: true }, NOW).join("\n");
+
+    expect(lines).toContain("待機中");
+    expect(lines).toContain("20分");
+    expect(lines).not.toContain("停止しています");
+  });
+
+  it("does not call a session that marked itself idle stalled", () => {
+    const lines = renderOrchestrator(
+      agent({ name: "ai-orchestrator", startedAt: Date.parse("2026-08-06T06:00:00.000Z") }),
+      { ...beat("2026-08-06T09:00:00.000Z"), idle: true },
+      NOW,
+    ).join("\n");
+
+    expect(lines).toContain("手が空いた");
+    expect(lines).not.toContain("巡回が止まっている可能性");
+  });
+
+  it("still flags a stall when the idle mark predates the session", () => {
+    const lines = renderOrchestrator(
+      agent({ name: "ai-orchestrator", startedAt: Date.parse("2026-08-06T09:30:00.000Z") }),
+      { ...beat("2026-08-06T09:00:00.000Z"), idle: true },
+      NOW,
+    ).join("\n");
+
+    expect(lines).toContain("巡回が止まっている可能性");
+  });
+
   it("flags a running orchestrator whose heartbeat has gone quiet", () => {
     const lines = renderOrchestrator(
       agent({ name: "ai-orchestrator" }),

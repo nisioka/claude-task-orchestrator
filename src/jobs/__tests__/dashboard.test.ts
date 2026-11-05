@@ -112,6 +112,40 @@ describe("buildStatusView", () => {
   });
 });
 
+describe("buildStatusView under ORCHESTRATOR_IDLE_EXIT", () => {
+  const agent = {
+    pid: null,
+    id: "x",
+    cwd: "/repo",
+    kind: "bg",
+    startedAt: Date.parse("2026-10-28T00:00:00Z"),
+    sessionId: "s",
+    name: "ai-orchestrator",
+    status: null,
+    state: "working",
+  };
+  const idleBeat = { at: "2026-10-28T01:00:00Z", dispatched: [], handedToHuman: [], note: "n", idle: true };
+
+  it("shows a stopped orchestrator with an idle mark as waiting", () => {
+    const view = buildStatusView(snapshot({ heartbeat: idleBeat }));
+    expect(view.orchestrator.idle).toBe(true);
+    expect(view.orchestrator.heartbeatStale).toBe(false);
+  });
+
+  it("does not call a session that marked itself idle stale", () => {
+    const view = buildStatusView(
+      snapshot({ orchestrator: { agent, state: null, context: null }, heartbeat: idleBeat }),
+    );
+    expect(view.orchestrator.idle).toBe(true);
+    expect(view.orchestrator.heartbeatStale).toBe(false);
+  });
+
+  it("is not idle without the mark", () => {
+    const view = buildStatusView(snapshot());
+    expect(view.orchestrator.idle).toBe(false);
+  });
+});
+
 describe("summarizePatrols", () => {
   const now = new Date("2026-10-28T03:00:00Z"); // 12:00 JST
   const lines = [

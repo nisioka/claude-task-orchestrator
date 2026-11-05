@@ -145,6 +145,43 @@ and exits when the last client disconnects.
 デーモンを立てるため、外側の保証は cron 側にある。将来サービス登録が復活した場合は、
 `evaluatePrerequisites` が自動的に未登録を問題として報告するようになる。
 
+## 仕事が少ない系統は、手が空いたら止める (ORCHESTRATOR_IDLE_EXIT)
+
+**常駐セッションは、何もしていなくても費用がかかる。** 巡回ゲートが「変化なし」と答えた回でも、
+起きるたびに文脈全体を読み直す。実測では、ゲートが skip を返した回が1回あたり約0.4Mトークン
+（2呼び出し × 文脈約20万）、約28分ごとに起きる。仕事がほとんど来ない系統では、この空回りが
+費用のほとんどを占める。
+
+`ORCHESTRATOR_IDLE_EXIT=1` を付けた系統では、ゲートが「変化なし」と答えたらセッションを止め、
+仕事が来たら起動し直す。
+
+- ゲートは skip の代わりに `巡回ゲート: exit` を出し、`"idle":true` 付きのハートビートを書く。
+  セッションは次の待機を張らずにターンを終える
+- supervisor は idle のハートビートを見て、セッションを黙って終了させる。停滞としては扱わない
+- セッションが無い間は、supervisor が20分ごとにゲートを自分で呼ぶ。ゲートはモデルを使わないので、
+  仕事の無い回の費用はほぼ0になる。patrol が返ったときだけ起動する（通知はしない）
+- 作業中の子がいる間、ゲートは必ず patrol を返す。子を置いたままセッションが止まることはない
+- `--restart` はゲートを通さず起動する。仕事が無ければ、最初のゲートでまた止まる
+- 通知するのは、手の空いたセッションを終了できなかったときだけ。次に仕事が来たときに二重に
+  稼働するおそれがあるため
+
+払うものは2つ。仕事が来るたびのコールドスタート（文脈約7万→最初の巡回で約12万）と、
+反応の遅れ（最大で supervisor の間隔ぶん、既定20分）。投入が少ないなら、空回りを続けるより安い。
+
+**ゲートから見えない入力を持つ系統では有効にしない。** セッションの道具でしか読めない入力
+（メッセージの取り込みなど）は、セッションの定期的な強制巡回（`ORCHESTRATOR_FULL_PATROL_SECONDS`）
+だけが拾っている。セッションを止めると、それも止まる。入力がタスクソースだけの系統なら、
+巡回が反応するものはすべてゲートの比較対象（AIのボールの `ID|ステータス|更新日時`、予約投入、
+自分のオープンPR、子エージェント）に現れる。その場合は強制巡回も要らないので、
+`ORCHESTRATOR_FULL_PATROL_SECONDS=86400` のように大きくしておく。
+
+```cron
+*/20 * * * * flock -n $HOME/.local/state/ai-orchestrator-b/supervisor.lock -c 'cd /path/to/repo && ORCHESTRATOR_IDLE_EXIT=1 ORCHESTRATOR_FULL_PATROL_SECONDS=86400 ORCHESTRATOR_STATE_DIR=$HOME/.local/state/ai-orchestrator-b npx tsx src/index.ts orchestrator-supervisor' >> $HOME/.local/state/ai-orchestrator-b/supervisor.log 2>&1
+```
+
+`orchestrator-status` とダッシュボードは、止まっている間は「待機中」と表示する。
+「停止しています」「巡回が止まっている可能性」とは表示しない。
+
 ## 検証用コンテナの回収 (container-sweep)
 
 常駐セッションではなく cron が持つ。**理由は、判定に必要な事実がセッションより長生きするからではなく、

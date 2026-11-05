@@ -86,6 +86,23 @@ export interface OrchestratorConfig {
   fullPatrolSeconds: number;
 
   /**
+   * Stop the resident session whenever the gate finds nothing to do, and start
+   * one again only when it does (`ORCHESTRATOR_IDLE_EXIT=1`).
+   *
+   * An idle resident session is not free: every wake re-reads its whole
+   * context, even when the gate says skip. For an instance whose only input is
+   * the task source, the gate sees everything a patrol would react to, so the
+   * session can be put down and the supervisor can run the gate in its place.
+   * The cost moves from "every wake" to "one cold start per batch of work".
+   *
+   * Off by default. **Leave it off for an instance that takes input the gate
+   * cannot see** (messages read through the session's own tools): that input
+   * only arrives through the session's periodic full patrol, which stops with
+   * the session.
+   */
+  idleExit: boolean;
+
+  /**
    * Context size at which the resident session is recycled. `null` disables.
    *
    * The resident's context only grows: it starts around 40k and, left alone,
@@ -208,6 +225,7 @@ export function loadOrchestratorConfig(): OrchestratorConfig {
     maxIntervalSeconds: parsePositiveInt("ORCHESTRATOR_MAX_INTERVAL_SECONDS", 1800),
     startupGraceSeconds: parsePositiveInt("ORCHESTRATOR_STARTUP_GRACE_SECONDS", 1800),
     fullPatrolSeconds: parsePositiveInt("ORCHESTRATOR_FULL_PATROL_SECONDS", 3600),
+    idleExit: parseFlag("ORCHESTRATOR_IDLE_EXIT"),
 
     maxSessionContextTokens: parseOptionalPositiveInt(
       "ORCHESTRATOR_MAX_SESSION_CONTEXT_TOKENS",
@@ -321,6 +339,20 @@ function parseOptionalPositiveInt(name: string, defaultValue: number | null): nu
     throw new Error(`環境変数 ${name} の値が不正です: "${raw}" (1以上の整数、または "-" で無効化)`);
   }
   return value;
+}
+
+/**
+ * `1` / `0`, or unset for off.
+ *
+ * Anything else is refused rather than read as one or the other: a misspelt
+ * value read as "off" leaves the idle session running and paying, read as "on"
+ * stops a session whose input the gate may not see. Neither shows up anywhere.
+ */
+function parseFlag(name: string): boolean {
+  const raw = process.env[name]?.trim();
+  if (!raw || raw === "0") return false;
+  if (raw === "1") return true;
+  throw new Error(`環境変数 ${name} の値が不正です: "${raw}" (1 で有効、0 か未設定で無効)`);
 }
 
 function parsePositiveInt(name: string, defaultValue: number): number {

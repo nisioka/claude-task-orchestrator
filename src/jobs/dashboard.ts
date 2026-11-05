@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   collectOrchestratorSnapshot,
+  isIdleExit,
   type AgentView,
   type OrchestratorSnapshot,
 } from "./orchestrator-status.js";
@@ -75,6 +76,8 @@ export interface StatusView {
     heartbeatAt: string | null;
     heartbeatNote: string | null;
     heartbeatStale: boolean;
+    /** Under ORCHESTRATOR_IDLE_EXIT: the session is down, or about to be, because there is no work. */
+    idle: boolean;
   };
   children: AgentPanel[];
   /** The workflow's Wait status. Shown, but not counted as something the human has to act on. */
@@ -133,10 +136,17 @@ export function buildStatusView(snapshot: OrchestratorSnapshot): StatusView {
       heartbeatAt: heartbeat?.at ?? null,
       heartbeatNote: heartbeat?.note ?? null,
       // Stale only means something while the session is up; a stopped one is reported as stopped.
+      // An idle exit is not a stall either: the session stopped because it was told to.
       heartbeatStale:
         snapshot.orchestrator !== null &&
         heartbeat !== null &&
+        !isIdleExit(snapshot.orchestrator.agent, heartbeat) &&
         isHeartbeatStale(heartbeat, snapshot.takenAt, snapshot.maxIntervalSeconds),
+      idle:
+        heartbeat !== null &&
+        (snapshot.orchestrator === null
+          ? heartbeat.idle === true
+          : isIdleExit(snapshot.orchestrator.agent, heartbeat)),
     },
     children: snapshot.children.map((child) => agentPanel(child, snapshot.childContextLimitTokens)),
     waitStatus: snapshot.workflow.wait,

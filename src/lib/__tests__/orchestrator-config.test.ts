@@ -33,6 +33,7 @@ const ORCHESTRATOR_ENV = [
   "ORCHESTRATOR_CHILD_CONTEXT_LIMIT_TOKENS",
   "ORCHESTRATOR_CLAUDE_BIN",
   "ORCHESTRATOR_GROUP",
+  "ORCHESTRATOR_IDLE_EXIT",
   "CLAUDE_CONFIG_DIR",
 ];
 
@@ -417,5 +418,23 @@ describe("loadOrchestratorConfig group and account", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", "/var/lib/claude-second");
 
     expect(loadOrchestratorConfig().claudeConfigDir).toBe("/var/lib/claude-second");
+  });
+});
+
+describe("ORCHESTRATOR_IDLE_EXIT", () => {
+  it("is off unless set", () => {
+    expect(loadOrchestratorConfig().idleExit).toBe(false);
+  });
+
+  it("reads 1 as on and 0 as off", () => {
+    vi.stubEnv("ORCHESTRATOR_IDLE_EXIT", "1");
+    expect(loadOrchestratorConfig().idleExit).toBe(true);
+    vi.stubEnv("ORCHESTRATOR_IDLE_EXIT", "0");
+    expect(loadOrchestratorConfig().idleExit).toBe(false);
+  });
+
+  it("refuses anything else rather than guess", () => {
+    vi.stubEnv("ORCHESTRATOR_IDLE_EXIT", "yes");
+    expect(() => loadOrchestratorConfig()).toThrow("ORCHESTRATOR_IDLE_EXIT");
   });
 });

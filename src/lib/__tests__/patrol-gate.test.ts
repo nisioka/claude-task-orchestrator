@@ -5,11 +5,12 @@ import {
   EMPTY_GATE_STATE,
   findLastPatrol,
   formatDecision,
+  gateAction,
   parseGateState,
   type GateSnapshot,
   type GateState,
 } from "../patrol-gate.js";
-import type { HeartbeatRecord } from "../agent-runtime.js";
+import { parseHeartbeatTail, type HeartbeatRecord } from "../agent-runtime.js";
 
 const NOW = new Date("2026-08-06T12:00:00.000Z");
 const HOUR = 3600;
@@ -227,5 +228,47 @@ describe("parseGateState", () => {
 
   it("書いたものを読み戻せる", () => {
     expect(parseGateState(JSON.stringify(settled()))).toEqual(settled());
+  });
+});
+
+describe("ORCHESTRATOR_IDLE_EXIT のときのゲート", () => {
+  const skip = { verdict: "skip" as const, reasons: [], state: EMPTY_GATE_STATE };
+  const patrol = { verdict: "patrol" as const, reasons: ["子エージェントが作業中（1件）"], state: EMPTY_GATE_STATE };
+
+  it("省略の代わりに exit を返す", () => {
+    expect(gateAction(skip, true)).toBe("exit");
+    expect(formatDecision(skip, patrolAt("2026-08-06T11:48:00.000Z"), NOW, true)).toBe(
+      "巡回ゲート: exit — 変化なし（前回の巡回から12分）",
+    );
+  });
+
+  it("巡回すべきときは有効でも patrol のまま", () => {
+    expect(gateAction(patrol, true)).toBe("patrol");
+    expect(formatDecision(patrol, null, NOW, true)).toBe("巡回ゲート: patrol — 子エージェントが作業中（1件）");
+  });
+
+  it("無効なら今までどおり skip", () => {
+    expect(gateAction(skip, false)).toBe("skip");
+  });
+
+  it("作業中の子がいれば、有効でも exit にならない", () => {
+    const decision = decideGate({
+      snapshot: snapshot({ runningChildren: ["ai-impl-TASK-1|working"], activeChildren: ["ai-impl-TASK-1"] }),
+      state: settled(snapshot({ runningChildren: ["ai-impl-TASK-1|working"], activeChildren: ["ai-impl-TASK-1"] })),
+      lastPatrol: patrolAt("2026-08-06T11:50:00.000Z"),
+      now: NOW,
+      fullPatrolSeconds: HOUR,
+    });
+    expect(gateAction(decision, true)).toBe("patrol");
+  });
+
+  it("idle の印を付けたハートビートを書き、それは巡回として数えない", () => {
+    const line = buildGateHeartbeat(NOW, true);
+    expect(parseHeartbeatTail(line)?.idle).toBe(true);
+    expect(findLastPatrol(line)).toBeNull();
+  });
+
+  it("無効のときのハートビートには印が付かない", () => {
+    expect(parseHeartbeatTail(buildGateHeartbeat(NOW))?.idle).toBeUndefined();
   });
 });

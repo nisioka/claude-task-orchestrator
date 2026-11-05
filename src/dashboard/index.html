@@ -159,7 +159,10 @@ function renderStatus(panel) {
            el("dt", {}, "文脈"), el("dd", {}, `${tokens(o.agent.contextTokens)}${o.agent.contextLimitTokens ? ` / 上限 ${tokens(o.agent.contextLimitTokens)}` : ""}`),
            el("dt", {}, "最終巡回"), el("dd", {}, o.heartbeatAt ? `${age(o.heartbeatAt)}前` : "なし")),
          o.heartbeatNote ? el("p", { class: "note muted" }, o.heartbeatNote) : null]
-      : el("div", { class: "alert bad" }, "停止しています。次回の orchestrator-supervisor で起動されます"),
+      : o.idle
+        ? el("div", { class: "alert" }, `待機中（仕事が無いため止めています。仕事が来たら起動します）。最終確認 ${o.heartbeatAt ? `${age(o.heartbeatAt)}前` : "なし"}`)
+        : el("div", { class: "alert bad" }, "停止しています。次回の orchestrator-supervisor で起動されます"),
+    o.agent && o.idle ? el("div", { class: "alert" }, "手が空いたので、次回の orchestrator-supervisor で終了します") : null,
     o.heartbeatStale ? el("div", { class: "alert bad" }, "巡回が止まっている可能性があります。orchestrator-supervisor を実行してください") : null,
     o.agent?.contextOver ? el("div", { class: "alert warn" }, "文脈が上限に達しました。次回の supervisor で入れ替わります") : null);
 

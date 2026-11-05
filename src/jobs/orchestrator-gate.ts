@@ -22,7 +22,9 @@ import {
   EMPTY_GATE_STATE,
   findLastPatrol,
   formatDecision,
+  gateAction,
   parseGateState,
+  type GateAction,
   type GateSnapshot,
   type GateState,
 } from "../lib/patrol-gate.js";
@@ -32,26 +34,44 @@ const execFileAsync = promisify(execFile);
 /** Search results stop here; a list that reaches it may be missing the PR that changed. */
 const PULL_REQUEST_LIMIT = 200;
 
+/** The gate's answer, and the one line it prints. */
+export interface GateOutcome {
+  action: GateAction;
+  line: string;
+}
+
 /**
  * Run at the end of the resident session's wait, before it wakes to patrol.
  *
- * Prints exactly one line on stdout, `巡回ゲート: skip …` or
- * `巡回ゲート: patrol …`. On skip the gate has already written the heartbeat,
- * so the session only re-arms its wait. Everything else — including this job
- * failing — means patrol, which is why errors are turned into a patrol verdict
- * here rather than thrown.
+ * Prints exactly one line on stdout, `巡回ゲート: skip …`, `巡回ゲート: exit …`
+ * or `巡回ゲート: patrol …`. On skip and exit the gate has already written the
+ * heartbeat, so the session only re-arms its wait (skip) or stops (exit).
+ * Everything else — including this job failing — means patrol, which is why
+ * errors are turned into a patrol verdict here rather than thrown.
  */
 export async function runOrchestratorGate(): Promise<void> {
+  console.log((await evaluateGate()).line);
+}
+
+/**
+ * The gate without the printing, for the supervisor.
+ *
+ * Under `ORCHESTRATOR_IDLE_EXIT` the supervisor calls this while no resident
+ * session is up, to decide whether to start one. Only one of the two ever calls
+ * it at a time — the supervisor stays out while a session is alive — so
+ * `patrol-gate.json` keeps a single writer.
+ */
+export async function evaluateGate(): Promise<GateOutcome> {
   const config = loadOrchestratorConfig();
   const statePath = join(config.stateDir, "patrol-gate.json");
   const now = new Date();
+  const patrol = (why: string): GateOutcome => ({ action: "patrol", line: `巡回ゲート: patrol — ${why}` });
 
   let snapshot: GateSnapshot;
   try {
     snapshot = await takeSnapshot();
   } catch (error) {
-    console.log(`巡回ゲート: patrol — 状態を読めなかった (${error instanceof Error ? error.message : String(error)})`);
-    return;
+    return patrol(`状態を読めなかった (${error instanceof Error ? error.message : String(error)})`);
   }
 
   const [state, heartbeatRaw] = await Promise.all([readState(statePath), readText(config.heartbeatPath)]);
@@ -68,15 +88,17 @@ export async function runOrchestratorGate(): Promise<void> {
     await writeState(statePath, decision.state);
     if (decision.verdict === "skip") {
       await mkdir(dirname(config.heartbeatPath), { recursive: true });
-      await appendFile(config.heartbeatPath, `${buildGateHeartbeat(now)}\n`);
+      await appendFile(config.heartbeatPath, `${buildGateHeartbeat(now, config.idleExit)}\n`);
     }
   } catch (error) {
     // Without the heartbeat the supervisor would call a healthy session stalled.
-    console.log(`巡回ゲート: patrol — 記録を書けなかった (${error instanceof Error ? error.message : String(error)})`);
-    return;
+    return patrol(`記録を書けなかった (${error instanceof Error ? error.message : String(error)})`);
   }
 
-  console.log(formatDecision(decision, lastPatrol, now));
+  return {
+    action: gateAction(decision, config.idleExit),
+    line: formatDecision(decision, lastPatrol, now, config.idleExit),
+  };
 }
 
 async function takeSnapshot(): Promise<GateSnapshot> {

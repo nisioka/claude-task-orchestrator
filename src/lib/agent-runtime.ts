@@ -74,6 +74,12 @@ export interface HeartbeatRecord {
   dispatched: string[];
   handedToHuman: string[];
   note: string | null;
+  /**
+   * Written by the patrol gate when it found nothing to do and the instance is
+   * set to stop its resident session when idle (`ORCHESTRATOR_IDLE_EXIT`). The
+   * supervisor reads it as "the session put itself down", not as a stall.
+   */
+  idle?: boolean;
 }
 
 /** States after which the daemon will not do more work on a session. */
@@ -188,6 +194,7 @@ export function parseHeartbeatTail(raw: string): HeartbeatRecord | null {
     dispatched: asStringArray(parsed.dispatched),
     handedToHuman: asStringArray(parsed.handedToHuman),
     note: asString(parsed.note),
+    ...(parsed.idle === true ? { idle: true } : {}),
   };
 }
 

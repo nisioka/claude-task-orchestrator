@@ -254,6 +254,19 @@ export function renderAgent(
   return lines;
 }
 
+/**
+ * The session wrote its own idle mark, so its silence is an exit, not a stall.
+ *
+ * A mark from before the session started belongs to its predecessor — the same
+ * reading the supervisor makes in `assessIdle`.
+ */
+export function isIdleExit(agent: AgentSummary, heartbeat: HeartbeatRecord | null): boolean {
+  if (heartbeat?.idle !== true) return false;
+  if (agent.startedAt === null) return true;
+  const at = new Date(heartbeat.at).getTime();
+  return !Number.isNaN(at) && at >= agent.startedAt;
+}
+
 export function renderOrchestrator(
   agent: AgentSummary | null,
   heartbeat: HeartbeatRecord | null,
@@ -263,6 +276,14 @@ export function renderOrchestrator(
   contextLimitTokens: number | null = null,
 ): string[] {
   if (!agent) {
+    if (heartbeat?.idle) {
+      // ORCHESTRATOR_IDLE_EXIT: down on purpose. Saying "stopped" here would
+      // read as a fault on every quiet day.
+      return [
+        "  待機中（仕事が無いため止めています。仕事が来たら orchestrator-supervisor が起動します）",
+        `  最終確認: ${formatAge(heartbeat.at, now)}前`,
+      ];
+    }
     return [
       "  停止しています。次回の orchestrator-supervisor の実行で起動されます。",
       heartbeat ? `  最終ハートビート: ${formatAge(heartbeat.at, now)}前` : "  ハートビートなし",
@@ -288,6 +309,11 @@ export function renderOrchestrator(
   }
 
   lines.push(`  最終ハートビート: ${formatAge(heartbeat.at, now)}前  ${heartbeat.note ?? ""}`.trimEnd());
+  if (isIdleExit(agent, heartbeat)) {
+    // It stopped patrolling because it was told to, so the stall warning below would be wrong.
+    lines.push("  手が空いたので、次回の orchestrator-supervisor で終了します");
+    return lines;
+  }
   if (isHeartbeatStale(heartbeat, now, maxIntervalSeconds)) {
     // Present but not progressing — the failure a liveness check cannot see.
     lines.push("  ⚠ 巡回が止まっている可能性があります");

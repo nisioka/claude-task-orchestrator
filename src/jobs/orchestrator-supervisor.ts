@@ -35,6 +35,7 @@ import {
   scopeFilter,
 } from "../lib/task-scope.js";
 import { sendNotifications } from "../lib/notification.js";
+import { evaluateGate, type GateOutcome } from "./orchestrator-gate.js";
 import { truncateFieldValue } from "../lib/types.js";
 import type { DiscordPayload } from "../lib/types.js";
 
@@ -46,6 +47,13 @@ const execFileAsync = promisify(execFile);
  * else. Patrol, judgement and dispatch belong to the session itself — moving
  * any of it here would turn every tick into a cold start, which is the
  * expensive case.
+ *
+ * The one exception is `ORCHESTRATOR_IDLE_EXIT`. There the session stops
+ * itself when the gate finds nothing to do, and while none is up this job runs
+ * the gate in its place — the gate is code, not a model, so a tick with nothing
+ * to do costs no tokens. A cold start is paid only when the gate says there is
+ * work, which for an instance with little work is far cheaper than a resident
+ * session re-reading its context every wake.
  */
 
 // ─── Health ─────────────────────────────────────────────────────────
@@ -140,6 +148,51 @@ export function assessRecycle(input: RecycleInput): RecycleVerdict {
   }
 
   return { kind: "keep" };
+}
+
+// ─── Idle exit ──────────────────────────────────────────────────────
+
+export interface IdleInput {
+  idleExit: boolean;
+  forceRestart: boolean;
+  /** Whether a resident session is up — anything `assessHealth` did not call absent. */
+  sessionUp: boolean;
+  startedAt: number | null;
+  lastHeartbeat: HeartbeatRecord | null;
+}
+
+export type IdleVerdict =
+  /** Idle exit is off, or the human asked for a restart: the usual rules apply. */
+  | { kind: "off" }
+  /** A session is up and patrolling. The usual health and recycle checks apply. */
+  | { kind: "busy" }
+  /** The session's own gate told it to stop. Put it down, then ask the gate. */
+  | { kind: "put-down" }
+  /** No session. Start one only if the gate finds work. */
+  | { kind: "ask-gate" };
+
+/**
+ * Under `ORCHESTRATOR_IDLE_EXIT`, decide whether the session is meant to be down.
+ *
+ * The session marks its own exit with an `idle` heartbeat, and stops arming its
+ * wait. To the stall check that looks exactly like a loop that quietly stopped,
+ * so the mark has to be read first, or every idle exit would be reported as a
+ * stall and restarted on the spot.
+ *
+ * The mark only counts if this session wrote it. One written before the
+ * session started belongs to its predecessor — a session started by
+ * `--restart`, or by the gate finding work, has not been idle yet.
+ *
+ * `--restart` overrides all of it: the human asked for a session, and one that
+ * finds nothing will put itself down at its first gate.
+ */
+export function assessIdle(input: IdleInput): IdleVerdict {
+  if (!input.idleExit || input.forceRestart) return { kind: "off" };
+  if (!input.sessionUp) return { kind: "ask-gate" };
+  if (input.lastHeartbeat?.idle !== true) return { kind: "busy" };
+  if (input.startedAt === null) return { kind: "put-down" };
+  const at = new Date(input.lastHeartbeat.at).getTime();
+  return !Number.isNaN(at) && at >= input.startedAt ? { kind: "put-down" } : { kind: "busy" };
 }
 
 function heartbeatPredatesStart(input: HealthInput): boolean {
@@ -237,7 +290,8 @@ export type StartReason =
   | "停滞のため再起動"
   | "指示ファイル反映のため再起動"
   | "文脈が上限に達したため再起動"
-  | "稼働時間が上限に達したため再起動";
+  | "稼働時間が上限に達したため再起動"
+  | "仕事が来たため起動";
 
 export function buildStartedPayload(
   sessionId: string,
@@ -297,6 +351,29 @@ export function buildStalledPayload(
       {
         title: "⚠ オーケストレータが停滞しています",
         description: description.join("\n"),
+        color: 0xffa000,
+      },
+    ],
+  };
+}
+
+/**
+ * The only thing idle exit ever says out loud.
+ *
+ * Putting the session down and starting it again are routine and pass in
+ * silence. A session that would not go is not: the next tick will ask the gate
+ * with the old session still up, and if there is work it starts a second loop
+ * on the same issues.
+ */
+export function buildIdleExitFailedPayload(sessionId: string): DiscordPayload {
+  return {
+    embeds: [
+      {
+        title: "⚠ 手の空いたオーケストレータを終了できませんでした",
+        description:
+          "巡回ゲートが「仕事なし」と判定したため常駐セッションを終了しようとしましたが、終了できませんでした。" +
+          "次に仕事が来たときに二重に稼働する可能性があります。\n" +
+          `\`claude agents\` で確認して、手で終了してください。\n\`${sessionId}\``,
         color: 0xffa000,
       },
     ],
@@ -436,6 +513,13 @@ export interface SupervisorIo {
    * comes before any gate has run.
    */
   handBackGroupMismatches(): Promise<void>;
+  /**
+   * Run the patrol gate on the supervisor's own tick.
+   *
+   * Only under `ORCHESTRATOR_IDLE_EXIT`, and only while no session is up — the
+   * gate keeps state between runs, and two callers at once would race on it.
+   */
+  consultGate(): Promise<GateOutcome>;
 }
 
 export const REAL_SUPERVISOR_IO: SupervisorIo = {
@@ -456,6 +540,7 @@ export const REAL_SUPERVISOR_IO: SupervisorIo = {
       sendNotifications(appConfig, payload),
     );
   },
+  consultGate: () => evaluateGate(),
 };
 
 /**
@@ -470,6 +555,10 @@ export const REAL_SUPERVISOR_IO: SupervisorIo = {
  * Only the first of those is worth telling anyone about. The other two happen
  * on schedule and finish on their own, so they pass without a word unless the
  * old session refused to die, which risks two loops on the same issues.
+ *
+ * Under `ORCHESTRATOR_IDLE_EXIT` a fourth one is added: the session ran out of
+ * work and said so. It is put down quietly, and while none is up the gate
+ * decides each tick whether to start one (see `assessIdle`).
  */
 export async function runOrchestratorSupervisor(
   options: SupervisorOptions = {},
@@ -525,15 +614,47 @@ export async function runOrchestratorSupervisor(
 
   const current = live[0] ?? null;
   const now = new Date();
+  const lastHeartbeat = await readLastHeartbeat(config.heartbeatPath);
   const verdict = assessHealth({
     sessionListed: current !== null,
     jobState: current?.state ?? null,
-    lastHeartbeat: await readLastHeartbeat(config.heartbeatPath),
+    lastHeartbeat,
     startedAt: current?.startedAt ?? null,
     now,
     maxIntervalSeconds: config.maxIntervalSeconds,
     graceSeconds: config.startupGraceSeconds,
   });
+
+  const idle = assessIdle({
+    idleExit: config.idleExit,
+    forceRestart: options.forceRestart ?? false,
+    sessionUp: verdict.kind !== "absent",
+    startedAt: current?.startedAt ?? null,
+    lastHeartbeat,
+  });
+
+  if (idle.kind === "put-down" && current) {
+    if (!(await terminate(current))) {
+      await notify(buildIdleExitFailedPayload(current.sessionId));
+      return;
+    }
+    console.log(`手が空いたため常駐セッションを終了しました: ${current.sessionId}`);
+  }
+
+  if (idle.kind === "put-down" || idle.kind === "ask-gate") {
+    // A gate failure comes back as patrol, so it starts a session rather than
+    // leaving work unattended — the same side the gate leans to everywhere.
+    const outcome = await io.consultGate();
+    console.log(outcome.line);
+    if (outcome.action !== "patrol") {
+      console.log("仕事が無いため常駐セッションを起動しませんでした");
+      return;
+    }
+    // Starting on work is routine here, so it passes in silence unless the
+    // residency prerequisites are unmet.
+    await launch(config, io, notify, "仕事が来たため起動", false);
+    return;
+  }
 
   const recycle = current
     ? assessRecycle({
@@ -589,6 +710,22 @@ export async function runOrchestratorSupervisor(
     reason = "再起動";
   }
 
+  await launch(config, io, notify, reason, announceStart);
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────
+
+/**
+ * Start a session and record it, saying so when the caller wants it said or
+ * the residency prerequisites are unmet.
+ */
+async function launch(
+  config: OrchestratorConfig,
+  io: SupervisorIo,
+  notify: (payload: DiscordPayload) => Promise<void>,
+  reason: StartReason,
+  announceStart: boolean,
+): Promise<void> {
   const prerequisites = await io.checkPrerequisites();
 
   // A failure here must not keep the session from starting. Nothing is let
@@ -634,7 +771,6 @@ export async function runOrchestratorSupervisor(
   }
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────
 
 /**
  * Leave exactly one orchestrator standing, and say so only when that failed.
