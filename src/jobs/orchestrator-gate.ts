@@ -14,6 +14,7 @@ import {
   withoutMismatches,
 } from "../lib/task-scope.js";
 import { createTaskProvider } from "../lib/tasks/factory.js";
+import type { TaskGroup } from "../lib/tasks/types.js";
 import { loadWorkflow, offTheQueueStatuses } from "../lib/tasks/workflow.js";
 import { classifySchedules } from "./orchestrator-status.js";
 import {
@@ -23,7 +24,10 @@ import {
   findLastPatrol,
   formatDecision,
   gateAction,
+  foreignRepositoryNames,
+  gitHubRepositoryOf,
   parseGateState,
+  withoutForeignPullRequests,
   type GateAction,
   type GateSnapshot,
   type GateState,
@@ -146,13 +150,40 @@ async function takeSnapshot(): Promise<GateSnapshot> {
   return {
     aiIssues: aiIssues.map((issue) => `${issue.id}|${issue.status}|${issue.updatedAt}`),
     scheduledPending: classifySchedules(aiIssues, now, workflow).pending.map(({ issue }) => issue.id),
-    openPullRequests,
+    openPullRequests:
+      openPullRequests === null
+        ? null
+        : withoutForeignPullRequests(openPullRequests, await foreignRepositories(repositories, config.group)),
     runningChildren,
     activeChildren,
   };
 }
 
-/** The human's open pull requests across every repository, or `null` when `gh` cannot answer. */
+/** Every registered repository's GitHub name, read from its `origin`; empty when not split by group. */
+async function foreignRepositories(
+  repositories: { path: string; group?: TaskGroup }[],
+  group: TaskGroup | null,
+): Promise<Set<string>> {
+  if (group === null) return new Set();
+  const named = await Promise.all(
+    repositories.map(async (repo) => ({ group: repo.group, name: await remoteRepositoryOf(repo.path) })),
+  );
+  return foreignRepositoryNames(named, group);
+}
+
+async function remoteRepositoryOf(path: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", path, "remote", "get-url", "origin"]);
+    return gitHubRepositoryOf(stdout);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The human's open pull requests across every repository, or `null` when `gh`
+ * cannot answer. Another group's are dropped afterwards, in `takeSnapshot`.
+ */
 async function listOpenPullRequests(): Promise<string[] | null> {
   try {
     const { stdout } = await execFileAsync(
