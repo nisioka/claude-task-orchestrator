@@ -305,7 +305,10 @@ export function withoutForeignPullRequests(pullRequests: string[], foreign: Read
  * A repository counts only when registered to another group and to neither
  * this group nor none — the same remote can be checked out twice. One whose
  * name could not be read (`null`) is never foreign: failing to prove it must
- * not cost a patrol.
+ * not cost a patrol. And if one of this group's own (or an ungrouped one)
+ * could not be read, nothing is foreign: it may be the same repository as any
+ * of the others, and dropping its pull requests would hide them until the
+ * next forced patrol.
  */
 export function foreignRepositoryNames(
   repositories: { group?: string; name: string | null }[],
@@ -314,8 +317,12 @@ export function foreignRepositoryNames(
   const ours = new Set<string>();
   const others = new Set<string>();
   for (const { group: owner, name } of repositories) {
-    if (name === null) continue;
-    (owner !== undefined && owner !== group ? others : ours).add(name);
+    const foreign = owner !== undefined && owner !== group;
+    if (name === null) {
+      if (!foreign) return new Set();
+      continue;
+    }
+    (foreign ? others : ours).add(name);
   }
   return new Set([...others].filter((name) => !ours.has(name)));
 }

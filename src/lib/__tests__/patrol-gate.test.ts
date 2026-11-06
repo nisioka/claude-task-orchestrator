@@ -334,6 +334,16 @@ describe("foreignRepositoryNames", () => {
   it("skips a repository whose remote could not be read", () => {
     expect(foreignRepositoryNames([{ group: "work", name: null }], "private").size).toBe(0);
   });
+
+  it("calls nothing foreign when one of this group's own remotes could not be read", () => {
+    // It may be a second checkout of corp/app, whose pull requests would then vanish.
+    const repos = [
+      { group: "private", name: null },
+      { group: "work", name: "corp/app" },
+    ];
+    expect(foreignRepositoryNames(repos, "private").size).toBe(0);
+    expect(foreignRepositoryNames([{ name: null }, { group: "work", name: "corp/app" }], "private").size).toBe(0);
+  });
 });
 
 describe("withoutForeignPullRequests", () => {
