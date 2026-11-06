@@ -4,9 +4,12 @@ import {
   decideGate,
   EMPTY_GATE_STATE,
   findLastPatrol,
+  foreignRepositoryNames,
   formatDecision,
   gateAction,
+  gitHubRepositoryOf,
   parseGateState,
+  withoutForeignPullRequests,
   type GateSnapshot,
   type GateState,
 } from "../patrol-gate.js";
@@ -270,5 +273,93 @@ describe("ORCHESTRATOR_IDLE_EXIT のときのゲート", () => {
 
   it("無効のときのハートビートには印が付かない", () => {
     expect(parseHeartbeatTail(buildGateHeartbeat(NOW))?.idle).toBeUndefined();
+  });
+});
+
+describe("gitHubRepositoryOf", () => {
+  it("reads the remote forms git prints", () => {
+    for (const url of [
+      "https://github.com/acme/Widget.git",
+      "https://github.com/acme/Widget",
+      "https://github.com/acme/Widget/",
+      "https://token@github.com/acme/Widget.git",
+      "git@github.com:acme/Widget.git",
+      "git@github.com:/acme/Widget.git",
+      "ssh://git@github.com/acme/Widget.git",
+      "ssh://git@github.com:22/acme/Widget",
+      "  https://github.com/acme/Widget.git\n",
+    ]) {
+      expect(gitHubRepositoryOf(url), url).toBe("acme/widget");
+    }
+  });
+
+  it("keeps dots in the name", () => {
+    expect(gitHubRepositoryOf("https://github.com/acme/example.com.git")).toBe("acme/example.com");
+  });
+
+  it("does not guess at anything else", () => {
+    expect(gitHubRepositoryOf("")).toBeNull();
+    expect(gitHubRepositoryOf("https://gitlab.com/acme/widget.git")).toBeNull();
+    expect(gitHubRepositoryOf("/srv/git/widget.git")).toBeNull();
+    expect(gitHubRepositoryOf("https://github.com/acme")).toBeNull();
+  });
+});
+
+describe("foreignRepositoryNames", () => {
+  it("names the other group's repositories", () => {
+    const names = foreignRepositoryNames(
+      [
+        { group: "work", name: "corp/app" },
+        { group: "private", name: "me/blog" },
+        { name: "me/dotfiles" },
+      ],
+      "private",
+    );
+    expect([...names]).toEqual(["corp/app"]);
+  });
+
+  it("does not call a repository foreign when this group or no group also holds it", () => {
+    const names = foreignRepositoryNames(
+      [
+        { group: "work", name: "me/tools" },
+        { group: "private", name: "me/tools" },
+        { group: "work", name: "me/notes" },
+        { name: "me/notes" },
+      ],
+      "private",
+    );
+    expect(names.size).toBe(0);
+  });
+
+  it("skips a repository whose remote could not be read", () => {
+    expect(foreignRepositoryNames([{ group: "work", name: null }], "private").size).toBe(0);
+  });
+
+  it("calls nothing foreign when one of this group's own remotes could not be read", () => {
+    // It may be a second checkout of corp/app, whose pull requests would then vanish.
+    const repos = [
+      { group: "private", name: null },
+      { group: "work", name: "corp/app" },
+    ];
+    expect(foreignRepositoryNames(repos, "private").size).toBe(0);
+    expect(foreignRepositoryNames([{ name: null }, { group: "work", name: "corp/app" }], "private").size).toBe(0);
+  });
+});
+
+describe("withoutForeignPullRequests", () => {
+  const prs = ["corp/App#12", "me/blog#3", "me/unregistered#1"];
+
+  it("drops only the other group's pull requests, ignoring case", () => {
+    expect(withoutForeignPullRequests(prs, new Set(["corp/app"]))).toEqual(["me/blog#3", "me/unregistered#1"]);
+  });
+
+  it("keeps everything when nothing is foreign", () => {
+    expect(withoutForeignPullRequests(prs, new Set())).toEqual(prs);
+  });
+
+  it("stops the other group's pull request from forcing a patrol", () => {
+    const before = withoutForeignPullRequests(["corp/app#12", "me/blog#3"], new Set(["corp/app"]));
+    const after = withoutForeignPullRequests(["corp/app#13", "me/blog#3"], new Set(["corp/app"]));
+    expect(after).toEqual(before);
   });
 });

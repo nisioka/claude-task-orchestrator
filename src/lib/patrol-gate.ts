@@ -262,3 +262,67 @@ function isBaseline(value: unknown): value is GateBaseline {
     (snapshot.openPullRequests === null || isList(snapshot.openPullRequests))
   );
 }
+
+// ─── Whose pull requests ────────────────────────────────────────────
+
+/**
+ * `owner/name` of a GitHub remote URL, lower-cased, or `null` for anything
+ * that is not plainly a GitHub repository.
+ *
+ * Covers what `git remote get-url` prints in practice: https with or without
+ * `.git`, scp-like ssh (`git@github.com:owner/name`, also with a stray `/`
+ * after the colon), and `ssh://` URLs.
+ */
+export function gitHubRepositoryOf(remoteUrl: string): string | null {
+  const match = remoteUrl
+    .trim()
+    .match(/^(?:https?:\/\/(?:[^@/]+@)?github\.com\/|ssh:\/\/git@github\.com(?::\d+)?\/|git@github\.com:\/?)([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
+  return match ? `${match[1]}/${match[2]}`.toLowerCase() : null;
+}
+
+/**
+ * Drop the pull requests that belong to another group's repositories.
+ *
+ * `gh search prs --author @me` answers across every repository the human
+ * touches, so an instance split by group would otherwise wake to the other
+ * group's work — and under idle exit every such wake is a cold start. Only a
+ * repository *shown* to be another group's is dropped (`foreign`, as
+ * `owner/name` from {@link gitHubRepositoryOf}); an unregistered one, or one
+ * whose remote could not be read, stays in, on the side of patrolling.
+ */
+export function withoutForeignPullRequests(pullRequests: string[], foreign: ReadonlySet<string>): string[] {
+  if (foreign.size === 0) return pullRequests;
+  return pullRequests.filter((pr) => {
+    const hash = pr.lastIndexOf("#");
+    const repository = (hash === -1 ? pr : pr.slice(0, hash)).toLowerCase();
+    return !foreign.has(repository);
+  });
+}
+
+/**
+ * The repositories, as `owner/name`, that are shown to be another group's.
+ *
+ * A repository counts only when registered to another group and to neither
+ * this group nor none — the same remote can be checked out twice. One whose
+ * name could not be read (`null`) is never foreign: failing to prove it must
+ * not cost a patrol. And if one of this group's own (or an ungrouped one)
+ * could not be read, nothing is foreign: it may be the same repository as any
+ * of the others, and dropping its pull requests would hide them until the
+ * next forced patrol.
+ */
+export function foreignRepositoryNames(
+  repositories: { group?: string; name: string | null }[],
+  group: string,
+): Set<string> {
+  const ours = new Set<string>();
+  const others = new Set<string>();
+  for (const { group: owner, name } of repositories) {
+    const foreign = owner !== undefined && owner !== group;
+    if (name === null) {
+      if (!foreign) return new Set();
+      continue;
+    }
+    (foreign ? others : ours).add(name);
+  }
+  return new Set([...others].filter((name) => !ours.has(name)));
+}
