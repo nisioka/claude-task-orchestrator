@@ -72,8 +72,9 @@ mkdir -p ~/.config/ai-orchestrator
 除外（`!`）が要るのは、生成物のツリーが純粋ではないため。`client/mutator/custom-instance.ts` は
 orval の出力先に置かれているが手書きで、生成器の入力でもある。
 
-`setupCommand` が無いときの worktree は `~/worktrees/github.com/<リポジトリ名>/<ISSUE-ID>` に、
-`origin/<baseBranch>` から `feat/<ISSUE-ID>` ブランチで作られる（`src/lib/worktree.ts`）。
+worktree はオーケストレータが作り、実装の子はその worktree の中で起動する。`setupCommand` が無いときは
+`origin/<baseBranch>` から `git worktree add` で作る。置き場所は `claude --bg` が起動できる（そのアカウントで
+信頼済みの）ディレクトリの下にする（[multiple-accounts.md](multiple-accounts.md)「作業場所の信頼」）。
 
 ## 対象リポジトリを追加する
 

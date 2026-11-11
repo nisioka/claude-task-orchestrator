@@ -10,6 +10,7 @@ import {
   implAgentName,
   judgeAgentName,
   parseAgentName,
+  agentSubject,
 } from "../orchestrator-config.js";
 
 /** Env vars this module reads; cleared before each test for hermetic defaults. */
@@ -330,6 +331,42 @@ describe("session naming", () => {
     });
   });
 
+  it("names one impl child per repository when a repository is given", () => {
+    expect(implAgentName("TASK-1226", "web-frontend")).toBe("ai-impl-TASK-1226--web-frontend");
+    expect(() => implAgentName("TASK-1226", "two words")).toThrow();
+  });
+
+  it.each(["web-frontend", "api_server", "example.com", "Repo2"])(
+    "round-trips an impl name with the repository %s back to issue and repository",
+    (label) => {
+      expect(parseAgentName(implAgentName("TASK-1226", label))).toEqual({
+        role: "impl",
+        issueIdentifier: "TASK-1226",
+        repositoryLabel: label,
+      });
+      expect(parseAgentName(implAgentName("z8tj1h26um", label))).toEqual({
+        role: "impl",
+        issueIdentifier: "z8tj1h26um",
+        repositoryLabel: label,
+      });
+    },
+  );
+
+  it("does not read a repository out of a judgement name", () => {
+    expect(parseAgentName("ai-judge-TASK-1226--web-frontend")).toEqual({
+      role: "judge",
+      issueIdentifier: "TASK-1226--web-frontend",
+    });
+  });
+
+  it("names the subject with the repository only when the child has one", () => {
+    expect(agentSubject(parseAgentName("ai-impl-TASK-1226"), "x")).toBe("TASK-1226");
+    expect(agentSubject(parseAgentName("ai-impl-TASK-1226--web-frontend"), "x")).toBe(
+      "TASK-1226 (web-frontend)",
+    );
+    expect(agentSubject(parseAgentName("claude-code"), "claude-code")).toBe("claude-code");
+  });
+
   it("recognises the resident session name", () => {
     expect(parseAgentName(ORCHESTRATOR_SESSION_NAME)).toEqual({ role: "orchestrator" });
   });
@@ -341,6 +378,8 @@ describe("session naming", () => {
     "claude-code",
     "ai-impl-two words",
     "ai-impl-/tmp/some/path",
+    "ai-impl-TASK-1226--",
+    "ai-impl---web-frontend",
   ])("returns null for %s", (name) => {
     expect(parseAgentName(name)).toBeNull();
   });

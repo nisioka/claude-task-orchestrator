@@ -1,5 +1,10 @@
 import { loadCoreConfig } from "../lib/core-config.js";
-import { loadOrchestratorConfig, ORCHESTRATOR_SESSION_NAME, parseAgentName } from "../lib/orchestrator-config.js";
+import {
+  agentSubject,
+  loadOrchestratorConfig,
+  ORCHESTRATOR_SESSION_NAME,
+  parseAgentName,
+} from "../lib/orchestrator-config.js";
 import {
   isRunningAgent,
   listDaemonJobs,
@@ -224,8 +229,7 @@ export function renderAgent(
   context: ContextSample | null = null,
   contextLimitTokens: number | null = null,
 ): string[] {
-  const parsed = parseAgentName(agent.name);
-  const subject = parsed && "issueIdentifier" in parsed ? parsed.issueIdentifier : agent.name;
+  const subject = agentSubject(parseAgentName(agent.name), agent.name);
   const runningFor = agent.startedAt === null
     ? "不明"
     : formatAge(new Date(agent.startedAt).toISOString(), now);

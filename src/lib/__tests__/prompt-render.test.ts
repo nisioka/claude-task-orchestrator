@@ -47,6 +47,21 @@ describe("renderPromptText", () => {
     );
   });
 
+  it("passes the child settings flag through, and drops it when there is none", () => {
+    const text = 'claude --bg {{childSettingsFlag}} --name x "go"';
+
+    expect(
+      renderPromptText(text, {
+        names: {},
+        promptDir: "/out",
+        instance: { childSettingsFlag: '--settings "/repo/.claude/settings.local.json"' },
+      }),
+    ).toBe('claude --bg --settings "/repo/.claude/settings.local.json" --name x "go"');
+    expect(renderPromptText(text, { names: {}, promptDir: "/out" })).toBe(
+      'claude --bg  --name x "go"',
+    );
+  });
+
   it("points repoDir at the core when nothing embeds it", () => {
     // Standalone, the two are the same place; a separate default would send the
     // prompts to a path that does not exist.

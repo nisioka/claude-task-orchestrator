@@ -560,6 +560,17 @@ export function normalizeWorktreePath(path: string): string {
 }
 
 /**
+ * Every worktree a task's header names: `worktree` for a task in one
+ * repository, `worktree-<repository label>` for each repository of a task that
+ * spans several.
+ */
+function claimedWorktrees(task: Task): string[] {
+  return Object.entries(readHeader(task.description))
+    .filter(([name, value]) => (name === "worktree" || name.startsWith("worktree-")) && value !== "")
+    .map(([, value]) => value);
+}
+
+/**
  * The task whose description header claims this worktree.
  *
  * The header is the one place a task and a directory are written down
@@ -573,8 +584,7 @@ export function findTaskForWorktree(tasks: readonly Task[], worktree: string): S
   const wanted = normalizeWorktreePath(worktree);
   let best: Task | null = null;
   for (const task of tasks) {
-    const claimed = readHeader(task.description).worktree;
-    if (!claimed || normalizeWorktreePath(claimed) !== wanted) continue;
+    if (!claimedWorktrees(task).some((claimed) => normalizeWorktreePath(claimed) === wanted)) continue;
     if (!best || task.updatedAt > best.updatedAt) best = task;
   }
   if (!best) return null;

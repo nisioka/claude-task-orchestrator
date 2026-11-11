@@ -72,12 +72,24 @@ export interface InstancePlaceholders {
   claudeBin?: string;
   /** `{{claudeConfigDir}}` */
   claudeConfigDir?: string;
+  /**
+   * `{{childSettingsFlag}}`: the `--settings` argument a child is started with,
+   * or nothing.
+   *
+   * A child starts inside its worktree, so the project settings it picks up are
+   * the target repository's, not those of the repository the orchestrator runs
+   * in. Passing the orchestrator's local settings keeps the permission rules a
+   * child has always been given — the push rules in particular, without which a
+   * force push falls to the auto mode classifier.
+   */
+  childSettingsFlag?: string;
 }
 
 const DEFAULT_INSTANCE: Required<InstancePlaceholders> = {
   repositoriesPath: "$HOME/.config/ai-orchestrator/repositories.json",
   claudeBin: "claude",
   claudeConfigDir: "$HOME/.claude",
+  childSettingsFlag: "",
 };
 
 /**
@@ -138,6 +150,7 @@ export function substitutePaths(text: string, context: RenderContext): string {
     .replaceAll("{{repositoriesPath}}", instance.repositoriesPath)
     .replaceAll("{{claudeBin}}", instance.claudeBin)
     .replaceAll("{{claudeConfigDir}}", instance.claudeConfigDir)
+    .replaceAll("{{childSettingsFlag}}", instance.childSettingsFlag)
     .replaceAll("{{coreDir}}", coreDir)
     .replaceAll("{{repoDir}}", context.repoDir ?? coreDir)
     .replaceAll("{{promptDir}}", context.promptDir)

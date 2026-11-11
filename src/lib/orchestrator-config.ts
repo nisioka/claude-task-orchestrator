@@ -284,8 +284,26 @@ export const ORCHESTRATOR_SESSION_NAME = "ai-orchestrator";
  */
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-export function implAgentName(issueIdentifier: string): string {
-  return `ai-impl-${assertIdentifier(issueIdentifier)}`;
+/**
+ * Separates the task identifier from the repository label in an impl child's
+ * name. Neither task source spells an identifier with a double hyphen, while
+ * labels are repository names and freely contain single hyphens, dots and
+ * underscores, so the first occurrence is always the boundary.
+ */
+const REPOSITORY_SEPARATOR = "--";
+
+/** What may follow the separator: a repository label as the config spells it. */
+const REPOSITORY_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * An impl child works in exactly one repository's worktree, so a task that
+ * spans repositories has one child per repository, told apart by the label.
+ * Without a label the name is the single-repository form.
+ */
+export function implAgentName(issueIdentifier: string, repositoryLabel?: string): string {
+  const base = `ai-impl-${assertIdentifier(issueIdentifier)}`;
+  if (repositoryLabel === undefined) return base;
+  return `${base}${REPOSITORY_SEPARATOR}${assertRepositoryLabel(repositoryLabel)}`;
 }
 
 export function judgeAgentName(issueIdentifier: string): string {
@@ -294,7 +312,7 @@ export function judgeAgentName(issueIdentifier: string): string {
 
 export type ParsedAgentName =
   | { role: "orchestrator" }
-  | { role: "impl" | "judge"; issueIdentifier: string };
+  | { role: "impl" | "judge"; issueIdentifier: string; repositoryLabel?: string };
 
 /** Inverse of the name builders. Returns `null` for anything we did not name. */
 export function parseAgentName(name: string): ParsedAgentName | null {
@@ -302,11 +320,24 @@ export function parseAgentName(name: string): ParsedAgentName | null {
 
   const match = /^ai-(impl|judge)-(.+)$/.exec(name);
   if (!match) return null;
+  const role = match[1] as "impl" | "judge";
 
-  const issueIdentifier = match[2];
+  const separator = role === "impl" ? match[2].indexOf(REPOSITORY_SEPARATOR) : -1;
+  const issueIdentifier = separator === -1 ? match[2] : match[2].slice(0, separator);
   if (!IDENTIFIER_PATTERN.test(issueIdentifier)) return null;
+  if (separator === -1) return { role, issueIdentifier };
 
-  return { role: match[1] as "impl" | "judge", issueIdentifier };
+  const repositoryLabel = match[2].slice(separator + REPOSITORY_SEPARATOR.length);
+  if (!REPOSITORY_LABEL_PATTERN.test(repositoryLabel)) return null;
+  return { role, issueIdentifier, repositoryLabel };
+}
+
+/** How the status views name a child's subject: the task, and the repository when there is one. */
+export function agentSubject(parsed: ParsedAgentName | null, fallback: string): string {
+  if (!parsed || parsed.role === "orchestrator") return fallback;
+  return parsed.repositoryLabel === undefined
+    ? parsed.issueIdentifier
+    : `${parsed.issueIdentifier} (${parsed.repositoryLabel})`;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -318,6 +349,13 @@ function assertIdentifier(identifier: string): string {
     );
   }
   return identifier;
+}
+
+function assertRepositoryLabel(label: string): string {
+  if (!REPOSITORY_LABEL_PATTERN.test(label)) {
+    throw new Error(`リポジトリラベルの形式が不正です: "${label}"`);
+  }
+  return label;
 }
 
 function parseEffort<T extends EffortLevel | null>(name: string, defaultValue: T): EffortLevel | T {
