@@ -336,9 +336,10 @@ describe("session naming", () => {
     expect(() => implAgentName("TASK-1226", "")).toThrow();
     expect(() => implAgentName("TASK-1226", "a\nb")).toThrow();
     expect(() => implAgentName("TASK-1226", "a\rb")).toThrow();
+    expect(() => implAgentName("TASK-1226", "it's")).toThrow();
   });
 
-  it.each(["web-frontend", "api_server", "example.com", "Repo2", "_repo", "my repo"])(
+  it.each(["web-frontend", "api_server", "example.com", "Repo2", "_repo", "my repo", "a\u2028b", "$HOME"])(
     "round-trips an impl name with the repository %s back to issue and repository",
     (label) => {
       expect(parseAgentName(implAgentName("TASK-1226", label))).toEqual({

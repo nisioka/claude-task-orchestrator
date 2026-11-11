@@ -263,7 +263,7 @@ MCP を**読み取りに**使うのは構いません。他所のチケット本
 2. その worktree へ `cd` して、同じコマンドの中で子を起動する
 
 ```bash
-cd /絶対パス/worktree && "{{claudeBin}}" --bg {{childSettingsFlag}} --name "ai-impl-<ISSUE-ID>--<リポジトリラベル>" \
+cd /絶対パス/worktree && "{{claudeBin}}" --bg {{childSettingsFlag}} --name 'ai-impl-<ISSUE-ID>--<リポジトリラベル>' \
   --model opus --effort xhigh "指示ファイル /path/to/instructions.md を読んで作業してください"
 ```
 
@@ -287,7 +287,7 @@ cd /絶対パス/worktree && "{{claudeBin}}" --bg {{childSettingsFlag}} --name "
 | 実装 | `ai-impl-<ISSUE-ID>--<リポジトリラベル>` |
 | 判断委譲 | `ai-judge-<ISSUE-ID>` |
 
-リポジトリラベルは `{{repositoriesPath}}` の `label` をそのまま使います。区切りはハイフン2つです。リポジトリラベルの無い `ai-impl-<ISSUE-ID>` も同じイシューの子として読めます。この形で起動された子が残っていれば、そのまま回収してください。
+リポジトリラベルは `{{repositoriesPath}}` の `label` をそのまま使います。区切りはハイフン2つです。名前はシングルクォートで囲んで渡してください。ラベルに `$` や空白があっても、そのまま1つの引数になります。リポジトリラベルの無い `ai-impl-<ISSUE-ID>` も同じイシューの子として読めます。この形で起動された子が残っていれば、そのまま回収してください。
 
 判断委譲の子は worktree を持たないので、これまでどおりあなたと同じ場所で起動します。
 

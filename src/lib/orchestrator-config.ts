@@ -297,7 +297,7 @@ const REPOSITORY_SEPARATOR = "--";
  * label, since the prompt puts it into the name verbatim. A stricter pattern
  * would drop such a child from the status view.
  */
-const REPOSITORY_LABEL_PATTERN = /^[^\u0000-\u001f\u007f]+$/;
+const REPOSITORY_LABEL_PATTERN = /^[^'\u0000-\u001f\u007f]+$/;
 
 /**
  * An impl child works in exactly one repository's worktree, so a task that
@@ -322,7 +322,7 @@ export type ParsedAgentName =
 export function parseAgentName(name: string): ParsedAgentName | null {
   if (name === ORCHESTRATOR_SESSION_NAME) return { role: "orchestrator" };
 
-  const match = /^ai-(impl|judge)-(.+)$/.exec(name);
+  const match = /^ai-(impl|judge)-(.+)$/s.exec(name);
   if (!match) return null;
   const role = match[1] as "impl" | "judge";
 
