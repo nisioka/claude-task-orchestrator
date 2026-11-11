@@ -114,6 +114,16 @@ describe("loadRepositoryConfig", () => {
     );
   });
 
+  it.each(["a\nb", "a\rb", "a\tb"])("throws when a label carries a control character (%j)", async (label) => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ repositories: [{ label, path: "/home/user/projects/x", baseBranch: "main" }] }),
+    );
+
+    const { loadRepositoryConfig } = await import("../repositories.js");
+
+    await expect(loadRepositoryConfig("/path/to/config.json")).rejects.toThrow("制御文字");
+  });
+
   it("throws when repositories is empty", async () => {
     mockReadFile.mockResolvedValueOnce(JSON.stringify({ repositories: [] }));
 

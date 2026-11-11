@@ -380,6 +380,21 @@ describe("findTaskForWorktree", () => {
     expect(findTaskForWorktree(tasks, WORKTREE)).toBeNull();
   });
 
+  it("finds a task that spans repositories by any of its per-repository worktrees", () => {
+    const other = "/home/u/worktrees/other/feat-x";
+    const tasks = [
+      task({
+        description:
+          `orchestrator:begin\nworktree-repo: ${WORKTREE}\nworktree-other: ${other}\n` +
+          "pr: https://example.com/pull/1\norchestrator:end",
+      }),
+    ];
+
+    expect(findTaskForWorktree(tasks, WORKTREE)?.id).toBe("T-1");
+    expect(findTaskForWorktree(tasks, other)?.id).toBe("T-1");
+    expect(findTaskForWorktree(tasks, "https://example.com/pull/1")).toBeNull();
+  });
+
   it("does not skip closed tasks: a finished ticket is the case worth naming", () => {
     expect(findTaskForWorktree([task({ status: "Done" })], WORKTREE)?.status).toBe("Done");
   });

@@ -14,7 +14,7 @@ import {
 import { isHeartbeatStale } from "../lib/agent-runtime.js";
 import { assessContext } from "../lib/session-context.js";
 import { GATE_HEARTBEAT_MARKER } from "../lib/patrol-gate.js";
-import { loadOrchestratorConfig, parseAgentName } from "../lib/orchestrator-config.js";
+import { agentSubject, loadOrchestratorConfig, parseAgentName } from "../lib/orchestrator-config.js";
 import { humanDutyByStatus } from "../lib/tasks/workflow.js";
 import { parseRunMarker } from "../lib/run-log.js";
 import type { Task } from "../lib/tasks/types.js";
@@ -111,10 +111,9 @@ function groupOldestFirst(tasks: Task[], keyOf: (task: Task) => string): { key: 
 }
 
 function agentPanel(view: AgentView, limitTokens: number | null): AgentPanel {
-  const parsed = parseAgentName(view.agent.name);
   return {
     name: view.agent.name,
-    subject: parsed && "issueIdentifier" in parsed ? parsed.issueIdentifier : view.agent.name,
+    subject: agentSubject(parseAgentName(view.agent.name), view.agent.name),
     state: view.state?.state ?? view.agent.state,
     detail: view.state?.detail ?? null,
     startedAt: view.agent.startedAt === null ? null : new Date(view.agent.startedAt).toISOString(),

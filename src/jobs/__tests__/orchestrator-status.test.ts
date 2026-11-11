@@ -244,6 +244,12 @@ describe("renderAgent", () => {
     expect(renderAgent(agent(), jobState(), NOW).join("\n")).toContain("TASK-1226");
   });
 
+  it("names the repository of a child that works on one repository of the issue", () => {
+    const rendered = renderAgent(agent({ name: "ai-impl-TASK-1226--web-frontend" }), jobState(), NOW);
+
+    expect(rendered.join("\n")).toContain("対象: TASK-1226 (web-frontend)");
+  });
+
   it("shows how long the agent has been running", () => {
     expect(renderAgent(agent(), jobState(), NOW).join("\n")).toContain("30分");
   });

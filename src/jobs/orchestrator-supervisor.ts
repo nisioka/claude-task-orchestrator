@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { userInfo } from "node:os";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { loadCoreConfig } from "../lib/core-config.js";
 import {
@@ -591,6 +591,7 @@ export async function runOrchestratorSupervisor(
       repositoriesPath: appConfig.repositoriesPath ?? DEFAULT_REPOSITORIES_PATH,
       claudeBin: config.claudeExecutable,
       claudeConfigDir: config.claudeConfigDir,
+      childSettingsFlag: await childSettingsFlag(config.repoDir),
     },
   );
 
@@ -719,6 +720,17 @@ export async function runOrchestratorSupervisor(
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
+
+/** `--settings` for the orchestrator's local settings, when it has any. */
+async function childSettingsFlag(repoDir: string): Promise<string> {
+  const path = join(repoDir, ".claude", "settings.local.json");
+  return (await fileExists(path)) ? `--settings ${shellQuote(path)}` : "";
+}
+
+/** Single-quoted for a POSIX shell, so `$` and quotes in the path reach the child as written. */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
 
 /**
  * Start a session and record it, saying so when the caller wants it said or

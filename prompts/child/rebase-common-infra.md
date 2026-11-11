@@ -16,12 +16,13 @@
 1. まず `gh pr view <番号> -R <owner>/<repo> --json mergeable,mergeStateStatus,headRefName,baseRefName`
    で**実際に競合しているのかと、基底ブランチが何か**を確認してください。
    綺麗なら、その事実を報告して終わりにしてください（無意味な force push をしない）
-2. worktree の場所を `git -C <ローカルのチェックアウト> worktree list --porcelain` で確認する
-   - 既存のものを使う前に `git -C <worktree> status -sb` で、**想定どおりのブランチにいて未コミットの変更が
-     無いこと**を確認してください。違っていたら、そこを使わず新しい worktree を作ること
-     （人間が別用途に使っている可能性があります）
-   - **このリポジトリは `{{repositoriesPath}}` に登録がありません。** `setupCommand` は無いので、
-     `main` から自分で `git worktree add` してください
+2. **あなたは、PRのブランチの worktree の中で起動されています。** worktree はオーケストレータが用意済みです。
+   `git status -sb` で、**PRのブランチにいて未コミットの変更が無いこと**を確認してください。
+   違っていたら、作業を始めずに報告してください（人間が別用途に使っている可能性があります）。
+   続けて `git fetch origin <branch>` で**リモートの先端**を取り、`git merge-base --is-ancestor origin/<branch> HEAD`
+   で**手元の履歴に含まれていること**を確かめてください。含まれていなければ、手元のブランチが古いか別物です。
+   作業を始めずに報告してください。ここで取った `origin/<branch>` の SHA を、force push の lease の旧先端SHAに使います。
+   新しい worktree を作ってそちらへ移ることもしないでください。git はこの worktree の中でそのまま叩きます
 3. `origin/main` を rebase で取り込み、競合を解消する。**どちらの変更も捨てないこと**
 4. force push（自分のブランチのみ）して、MERGEABLE / CLEAN とCIの結果を確認する
 
