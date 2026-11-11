@@ -335,6 +335,7 @@ describe("session naming", () => {
     expect(implAgentName("TASK-1226", "web-frontend")).toBe("ai-impl-TASK-1226--web-frontend");
     expect(() => implAgentName("TASK-1226", "")).toThrow();
     expect(() => implAgentName("TASK-1226", "a\nb")).toThrow();
+    expect(() => implAgentName("TASK-1226", "a\rb")).toThrow();
   });
 
   it.each(["web-frontend", "api_server", "example.com", "Repo2", "_repo", "my repo"])(

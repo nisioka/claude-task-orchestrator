@@ -105,6 +105,11 @@ export async function loadRepositoryConfig(configPath?: string): Promise<Reposit
     if (!entry.label || typeof entry.label !== "string") {
       throw new Error("各リポジトリマッピングには label (文字列) が必要です");
     }
+    // The label goes into child agent names verbatim, and a name that carries a
+    // control character cannot be read back.
+    if (/[\u0000-\u001f\u007f]/.test(entry.label)) {
+      throw new Error(`ラベルに改行や制御文字は使えません: ${JSON.stringify(entry.label)}`);
+    }
     if (!entry.path || typeof entry.path !== "string") {
       throw new Error(`リポジトリマッピング "${entry.label}" に path が必要です`);
     }

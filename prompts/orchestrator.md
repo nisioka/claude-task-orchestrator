@@ -263,7 +263,7 @@ MCP を**読み取りに**使うのは構いません。他所のチケット本
 2. その worktree へ `cd` して、同じコマンドの中で子を起動する
 
 ```bash
-cd /絶対パス/worktree && "{{claudeBin}}" --bg {{childSettingsFlag}} --name ai-impl-<ISSUE-ID>--<リポジトリラベル> \
+cd /絶対パス/worktree && "{{claudeBin}}" --bg {{childSettingsFlag}} --name "ai-impl-<ISSUE-ID>--<リポジトリラベル>" \
   --model opus --effort xhigh "指示ファイル /path/to/instructions.md を読んで作業してください"
 ```
 
