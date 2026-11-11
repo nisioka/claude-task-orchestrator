@@ -333,10 +333,11 @@ describe("session naming", () => {
 
   it("names one impl child per repository when a repository is given", () => {
     expect(implAgentName("TASK-1226", "web-frontend")).toBe("ai-impl-TASK-1226--web-frontend");
-    expect(() => implAgentName("TASK-1226", "two words")).toThrow();
+    expect(() => implAgentName("TASK-1226", "")).toThrow();
+    expect(() => implAgentName("TASK-1226", "a\nb")).toThrow();
   });
 
-  it.each(["web-frontend", "api_server", "example.com", "Repo2"])(
+  it.each(["web-frontend", "api_server", "example.com", "Repo2", "_repo", "my repo"])(
     "round-trips an impl name with the repository %s back to issue and repository",
     (label) => {
       expect(parseAgentName(implAgentName("TASK-1226", label))).toEqual({

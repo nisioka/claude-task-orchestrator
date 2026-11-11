@@ -292,8 +292,13 @@ const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  */
 const REPOSITORY_SEPARATOR = "--";
 
-/** What may follow the separator: a repository label as the config spells it. */
-const REPOSITORY_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/**
+ * What may follow the separator. The repository config accepts any string as a
+ * label and the prompt puts it into the name verbatim, so anything the config
+ * could hold must parse back; a stricter pattern would drop such a child from
+ * the status view.
+ */
+const REPOSITORY_LABEL_PATTERN = /^[^\n]+$/;
 
 /**
  * An impl child works in exactly one repository's worktree, so a task that

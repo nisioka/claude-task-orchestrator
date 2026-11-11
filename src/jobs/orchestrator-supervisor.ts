@@ -724,7 +724,12 @@ export async function runOrchestratorSupervisor(
 /** `--settings` for the orchestrator's local settings, when it has any. */
 async function childSettingsFlag(repoDir: string): Promise<string> {
   const path = join(repoDir, ".claude", "settings.local.json");
-  return (await fileExists(path)) ? `--settings "${path}"` : "";
+  return (await fileExists(path)) ? `--settings ${shellQuote(path)}` : "";
+}
+
+/** Single-quoted for a POSIX shell, so `$` and quotes in the path reach the child as written. */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 /**
