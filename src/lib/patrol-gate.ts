@@ -330,7 +330,7 @@ export function gitHubRepositoryOf(remoteUrl: string): string | null {
 /**
  * Drop the pull requests that belong to another group's repositories.
  *
- * `gh search prs --author @me` answers across every repository the human
+ * A search for `author:@me` answers across every repository the human
  * touches, so an instance split by group would otherwise wake to the other
  * group's work — and under idle exit every such wake is a cold start. Only a
  * repository *shown* to be another group's is dropped (`foreign`, as
