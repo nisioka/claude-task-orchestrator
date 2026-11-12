@@ -17,11 +17,13 @@ import { GATE_HEARTBEAT_MARKER } from "../lib/patrol-gate.js";
 import { agentSubject, loadOrchestratorConfig, parseAgentName } from "../lib/orchestrator-config.js";
 import { humanDutyByStatus } from "../lib/tasks/workflow.js";
 import { parseRunMarker } from "../lib/run-log.js";
+import { collectMergeablePrs } from "../lib/merge-readiness.js";
 import type { Task } from "../lib/tasks/types.js";
 
 /**
  * A local web dashboard over the same state `orchestrator-status` reads, plus
- * what only this machine knows: the patrol log, cron job logs and open PRs.
+ * what only this machine knows: the patrol log, cron job logs, open PRs and
+ * which of them may be merged now.
  *
  * Read-only. It never changes a task or an agent. Each panel is
  * fetched on its own and fails on its own, so one unreachable source does not
@@ -493,6 +495,7 @@ export async function runDashboard(): Promise<void> {
     patrols: uncached(async () => summarizePatrols(await readFile(config.heartbeatPath, "utf-8"), new Date())),
     cron: cached(CRON_TTL_MS, () => cronJobs(syslogPath)),
     prs: cached(PRS_TTL_MS, openPrs),
+    mergeable: cached(PRS_TTL_MS, () => collectMergeablePrs()),
   };
 
   const send = (res: ServerResponse, code: number, type: string, body: string) => {
