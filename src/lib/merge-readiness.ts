@@ -51,7 +51,9 @@ export interface MergeAfter {
 }
 
 const MERGE_AFTER_LINE = new RegExp(`^\\s*(?:[-*+]\\s+)?${MERGE_AFTER_KEY}\\s*:(.*)$`, "i");
-const FENCE = /^\s*(`{3,}|~{3,})/;
+const FENCE_OPEN = /^\s*(`{3,}|~{3,})/;
+/** A closing fence carries nothing after the marker; a line like ```js inside a block is content. */
+const FENCE_CLOSE = /^\s*(`{3,}|~{3,})\s*$/;
 const REPO = "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+";
 const SAME_REPO_REF = /^#(\d+)$/;
 const FULL_REF = new RegExp(`^(${REPO})#(\\d+)$`);
@@ -72,13 +74,16 @@ export function parseMergeAfter(body: string, ownRepo: string): MergeAfter {
   let fence: string | null = null;
 
   for (const line of body.split(/\r?\n/)) {
-    const marker = line.match(FENCE)?.[1];
-    if (marker) {
-      if (fence === null) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+    if (fence !== null) {
+      const close = line.match(FENCE_CLOSE)?.[1];
+      if (close && close[0] === fence[0] && close.length >= fence.length) fence = null;
       continue;
     }
-    if (fence !== null) continue;
+    const open = line.match(FENCE_OPEN)?.[1];
+    if (open) {
+      fence = open;
+      continue;
+    }
 
     const value = line.match(MERGE_AFTER_LINE)?.[1];
     if (value === undefined) continue;
@@ -247,8 +252,12 @@ export interface MergeableView {
   held: HeldPullRequest[];
 }
 
-/** States in which GitHub itself would refuse the merge, or has not worked it out yet. */
-const HELD_MERGE_STATES = new Set(["BLOCKED", "BEHIND", "DIRTY", "DRAFT", "UNKNOWN"]);
+/**
+ * GitHub merge states that let a pull request through; any other, including one GitHub adds later, holds it.
+ * UNSTABLE is GitHub's verdict on the checks, which also counts the runs `assessChecks` deliberately
+ * ignores, such as scheduled ones. The checks are judged there instead.
+ */
+const PASSING_MERGE_STATES = new Set(["CLEAN", "UNSTABLE", "HAS_HOOKS"]);
 
 function refLabel(ref: PullRequestRef): string {
   return `${ref.repo}#${ref.number}`;
@@ -259,7 +268,7 @@ function ownReasons(pr: OpenPullRequest): string[] {
   if (pr.isDraft) reasons.push("draft");
   if (pr.mergeable === "CONFLICTING") reasons.push("コンフリクトしている");
   else if (pr.mergeable !== "MERGEABLE") reasons.push("マージできるかを確かめられない");
-  if (pr.mergeStateStatus === null || HELD_MERGE_STATES.has(pr.mergeStateStatus)) {
+  if (pr.mergeStateStatus === null || !PASSING_MERGE_STATES.has(pr.mergeStateStatus)) {
     reasons.push(`GitHub のマージ状態が ${pr.mergeStateStatus ?? "不明"}`);
   }
   const checks = pr.checks;

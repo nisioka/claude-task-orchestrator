@@ -36,6 +36,16 @@ describe("parseMergeAfter", () => {
     expect(parseMergeAfter(body, "acme/web")).toEqual({ refs: [], invalid: [] });
   });
 
+  it("does not close a block on a fence line that carries an info string", () => {
+    const body = ["```", "```js", "```", "merge-after: acme/api#10"].join("\n");
+    expect(parseMergeAfter(body, "acme/web").refs).toEqual([{ repo: "acme/api", number: 10 }]);
+  });
+
+  it("closes a block only with the same marker, at least as long", () => {
+    const body = ["````", "~~~", "```", "merge-after: #1", "````", "merge-after: #2"].join("\n");
+    expect(parseMergeAfter(body, "acme/web").refs).toEqual([{ repo: "acme/web", number: 2 }]);
+  });
+
   it("does not read the key in the middle of a sentence", () => {
     expect(parseMergeAfter("Please merge this; merge-after: acme/api#10 is not a line", "acme/web").refs).toEqual([]);
   });
@@ -176,6 +186,7 @@ describe("judgeMergeable", () => {
     ["a conflict", { mergeable: "CONFLICTING" }, "コンフリクトしている"],
     ["an unknown mergeability", { mergeable: "UNKNOWN" }, "マージできるかを確かめられない"],
     ["a merge GitHub blocks", { mergeStateStatus: "BLOCKED" }, "GitHub のマージ状態が BLOCKED"],
+    ["a merge state it does not know", { mergeStateStatus: "SOMETHING_NEW" }, "GitHub のマージ状態が SOMETHING_NEW"],
     ["failing checks", { checks: { state: "failed", detail: "build" } }, "チェックが失敗: build"],
     ["running checks", { checks: { state: "pending", detail: "test" } }, "チェックが終わっていない: test"],
     ["unread checks", { checks: null }, "チェックを読んでいない"],
@@ -183,6 +194,10 @@ describe("judgeMergeable", () => {
     const view = judgeMergeable([pr("acme/api", 10, overrides)], none);
     expect(view.ready).toEqual([]);
     expect(view.held[0].reasons).toContain(reason);
+  });
+
+  it("lets UNSTABLE through when its own reading of the checks passed", () => {
+    expect(judgeMergeable([pr("acme/api", 10, { mergeStateStatus: "UNSTABLE" })], none).ready).toHaveLength(1);
   });
 
   it("keeps a waiting pull request off the list and names it on the one it waits for", () => {
