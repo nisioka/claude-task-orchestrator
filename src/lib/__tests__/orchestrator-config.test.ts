@@ -9,6 +9,7 @@ import {
   PROMPT_CACHE_TTL_SECONDS,
   implAgentName,
   judgeAgentName,
+  upkeepAgentName,
   parseAgentName,
   agentSubject,
 } from "../orchestrator-config.js";
@@ -355,6 +356,23 @@ describe("session naming", () => {
     },
   );
 
+  it("tells an upkeep child apart from an impl child of the same task", () => {
+    expect(upkeepAgentName("TASK-1226", "web-frontend")).toBe("ai-upkeep-TASK-1226--web-frontend");
+    expect(parseAgentName(upkeepAgentName("z8tj1h26um", "web-frontend"))).toEqual({
+      role: "upkeep",
+      issueIdentifier: "z8tj1h26um",
+      repositoryLabel: "web-frontend",
+    });
+    expect(parseAgentName(upkeepAgentName("TASK-1226"))).toEqual({
+      role: "upkeep",
+      issueIdentifier: "TASK-1226",
+    });
+    expect(() => upkeepAgentName("TASK-1226", "it's")).toThrow();
+    expect(agentSubject(parseAgentName("ai-upkeep-TASK-1226--web-frontend"), "x")).toBe(
+      "TASK-1226 (web-frontend)",
+    );
+  });
+
   it("does not read a repository out of a judgement name", () => {
     expect(parseAgentName("ai-judge-TASK-1226--web-frontend")).toEqual({
       role: "judge",
@@ -383,6 +401,8 @@ describe("session naming", () => {
     "ai-impl-/tmp/some/path",
     "ai-impl-TASK-1226--",
     "ai-impl---web-frontend",
+    "ai-upkeep-",
+    "ai-upkeep---web-frontend",
   ])("returns null for %s", (name) => {
     expect(parseAgentName(name)).toBeNull();
   });
