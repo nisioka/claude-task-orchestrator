@@ -140,6 +140,16 @@ export interface OrchestratorConfig {
   childContextLimitTokens: number | null;
 
   /**
+   * The shortest gap between two rebases of one pull request the human holds.
+   *
+   * Measured from the pull request's last force push, which GitHub records, so
+   * it survives the session that dispatched the rebase. The base branch can
+   * move many times a day; following every move would keep the head moving
+   * under the human while they review it.
+   */
+  handedRebaseIntervalSeconds: number;
+
+  /**
    * The `claude` binary. Overridable so a fake agent can drive the whole
    * launch → observe → collect path without spending model usage.
    */
@@ -245,6 +255,7 @@ export function loadOrchestratorConfig(): OrchestratorConfig {
       "ORCHESTRATOR_CHILD_CONTEXT_LIMIT_TOKENS",
       400_000,
     ),
+    handedRebaseIntervalSeconds: parsePositiveInt("ORCHESTRATOR_HANDED_REBASE_INTERVAL_SECONDS", 43_200),
 
     claudeExecutable: process.env.ORCHESTRATOR_CLAUDE_BIN || "claude",
 

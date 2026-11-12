@@ -18,6 +18,7 @@ import {
 const ORCHESTRATOR_ENV = [
   "ORCHESTRATOR_STATE_DIR",
   "ORCHESTRATOR_FULL_PATROL_SECONDS",
+  "ORCHESTRATOR_HANDED_REBASE_INTERVAL_SECONDS",
   "ORCHESTRATOR_SESSION_ID_PATH",
   "ORCHESTRATOR_HEARTBEAT_PATH",
   "ORCHESTRATOR_INSTRUCTION_PATH",
@@ -417,6 +418,12 @@ describe("loadOrchestratorConfig recycle limits", () => {
     expect(config.maxSessionContextTokens).toBe(300_000);
     expect(config.maxSessionAgeSeconds).toBe(86_400);
     expect(config.childContextLimitTokens).toBe(400_000);
+  });
+
+  it("rebases a pull request the human holds at most twice a day by default", () => {
+    expect(loadOrchestratorConfig().handedRebaseIntervalSeconds).toBe(43_200);
+    vi.stubEnv("ORCHESTRATOR_HANDED_REBASE_INTERVAL_SECONDS", "86400");
+    expect(loadOrchestratorConfig().handedRebaseIntervalSeconds).toBe(86_400);
   });
 
   it("accepts an override", () => {
