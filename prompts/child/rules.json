@@ -1,5 +1,6 @@
 [
   { "file": "child/impl-from-triage.md", "purpose": "トリアージ済みイシューの実装" },
   { "file": "child/infra-common.md", "purpose": "インフラ（Terraform）リポジトリの実装。`impl-from-triage.md` と**併せて**参照させる" },
-  { "file": "child/rebase-common-infra.md", "purpose": "rebase" }
+  { "file": "child/rebase-common-infra.md", "purpose": "rebase" },
+  { "file": "child/handed-pr-rebase.md", "purpose": "人間の手番の PR の rebase。担当者とステータスを動かさない" }
 ]
