@@ -3,6 +3,18 @@ import { readHeader, stripHeader, upsertHeader } from "../header.js";
 
 const BODY = "company-linear-id: ABC-1\n会社Linear: https://example.com/ABC-1\n\n## 見出し\n\n- 箇条書き\n";
 
+/**
+ * What ClickUp stores for a description it is given: `_` escaped, and a bare
+ * URL linked to itself with only the link text escaped. Its own output comes
+ * back unchanged, as ClickUp's does.
+ */
+function savedByClickUp(description: string): string {
+  return description.replace(/\[[^\]\n]*\]\([^)\s]*\)|(https?:\/\/[^\s)]+)|\\?_/g, (match, url?: string) => {
+    if (url) return `[${url.replace(/_/g, "\\_")}](${url})`;
+    return match === "_" ? "\\_" : match;
+  });
+}
+
 describe("upsertHeader", () => {
   it("takes the name's old HTML comment out of the body", () => {
     const result = upsertHeader(
@@ -116,6 +128,44 @@ describe("upsertHeader", () => {
     expect(d.match(/orchestrator:begin/g)).toHaveLength(1);
     expect(stripHeader(d)).toBe(BODY.trimStart());
   });
+
+  it("reads back names and values with underscores through ClickUp's saves", () => {
+    const written = { "worktree-repo_a": "/abs/repo_a/wt", PR: "https://example.com/o/r_x/pull/1" };
+    let d = savedByClickUp(upsertHeader(BODY, written));
+
+    expect(d).toContain("worktree-repo\\_a: /abs/repo\\_a/wt");
+    expect(readHeader(d)).toEqual(written);
+
+    for (let i = 0; i < 3; i++) d = savedByClickUp(upsertHeader(d, { worktree: "/abs/wt" }));
+
+    expect(readHeader(d)).toEqual({ ...written, worktree: "/abs/wt" });
+    expect(savedByClickUp(d)).toBe(d);
+  });
+
+  it("replaces an entry ClickUp escaped instead of adding a second one", () => {
+    const saved = savedByClickUp(upsertHeader(BODY, { "worktree-repo_a": "/abs/repo_a/old" }));
+    const out = upsertHeader(saved, { "worktree-repo_a": "/abs/repo_a/new" });
+
+    expect(readHeader(out)).toEqual({ "worktree-repo_a": "/abs/repo_a/new" });
+    expect(out.match(/worktree-repo/g)).toHaveLength(1);
+  });
+
+  it("keeps a backslash written into a value, through a rewrite of another entry", () => {
+    const written = { note: "a\\_b\\\\c\\d" };
+    let d = upsertHeader(BODY, written);
+
+    expect(readHeader(d)).toEqual(written);
+
+    d = upsertHeader(d, { worktree: "/a" });
+
+    expect(readHeader(d)).toEqual({ ...written, worktree: "/a" });
+  });
+
+  it("removes an entry ClickUp escaped when given an empty value", () => {
+    const saved = savedByClickUp(upsertHeader(BODY, { "worktree-repo_a": "/abs/repo_a/wt", worktree: "/a" }));
+
+    expect(readHeader(upsertHeader(saved, { "worktree-repo_a": "" }))).toEqual({ worktree: "/a" });
+  });
 });
 
 describe("readHeader", () => {
@@ -132,6 +182,33 @@ describe("readHeader", () => {
     const linked = "orchestrator:begin\nPR: [https://x/1](https://x/1)\norchestrator:end\n\n本文";
 
     expect(readHeader(linked)).toEqual({ PR: "https://x/1" });
+  });
+
+  it("undoes ClickUp's escaping of underscores in a name and a value", () => {
+    const escaped = "orchestrator:begin\nworktree-repo\\_a: /abs/repo\\_a/wt\norchestrator:end\n\n本文";
+
+    expect(readHeader(escaped)).toEqual({ "worktree-repo_a": "/abs/repo_a/wt" });
+  });
+
+  it("reads back an auto-linked URL whose link text ClickUp escaped", () => {
+    // The text of the link is escaped and its destination is not, so the two
+    // differ as strings until the text is unescaped.
+    const linked =
+      "orchestrator:begin\nPR: [https://x/o/r\\_x/pull/1](https://x/o/r_x/pull/1)\norchestrator:end\n\n本文";
+
+    expect(readHeader(linked)).toEqual({ PR: "https://x/o/r_x/pull/1" });
+  });
+
+  it("keeps a backslash that escapes nothing, and unescapes an escaped one", () => {
+    const plain = "orchestrator:begin\nnote: a\\b\\\\c\norchestrator:end\n\n本文";
+
+    expect(readHeader(plain)).toEqual({ note: "a\\b\\c" });
+  });
+
+  it("reads a link whose text is not its URL as plain text", () => {
+    const labelled = "orchestrator:begin\nPR: [label](https://x/1)\norchestrator:end\n\n本文";
+
+    expect(readHeader(labelled)).toEqual({ PR: "[label](https://x/1)" });
   });
 
   it("reads a line ClickUp turned into a list item", () => {

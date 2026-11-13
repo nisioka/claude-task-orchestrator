@@ -115,6 +115,22 @@ describe("findHandedPullRequests", () => {
     ]);
   });
 
+  it("reads a worktree whose name and path ClickUp escaped", async () => {
+    // ClickUp stores `_` as `\\_`. Unread, the path names no directory and the
+    // label in the name matches no repository.
+    const escaped: Task = {
+      ...task("T1", {}),
+      description: "orchestrator:begin\nworktree-repo\\_x: /wt/repo\\_x/abc-1\norchestrator:end\n\nbody",
+    };
+    const found = await findHandedPullRequests(
+      [escaped],
+      [pr({ repository: "owner/repo_x" })],
+      [{ label: "repo_x", path: "/src/elsewhere", baseBranch: "main" }],
+      io({ "/wt/repo_x/abc-1": { ...WORKTREE, toplevel: "/wt/repo_x/abc-1", remote: "owner/repo_x" } }),
+    );
+    expect(found.map((f) => [f.repositoryLabel, f.worktree])).toEqual([["repo_x", "/wt/repo_x/abc-1"]]);
+  });
+
   it("links nothing for a worktree that is gone or on a detached head", async () => {
     const found = await findHandedPullRequests(
       [task("T1", { worktree: "/wt/gone" }), task("T2", { worktree: "/wt/detached" })],
