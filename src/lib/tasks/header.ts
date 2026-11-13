@@ -25,6 +25,12 @@
  * reason, so values go in bare. ClickUp normalises a bare URL to `[url](url)`
  * once and then leaves it alone; `readHeader` undoes that so a caller gets back
  * what it wrote.
+ *
+ * ClickUp also stores the block as markdown, so it backslash-escapes the
+ * punctuation markdown would read as syntax: `a_b` comes back as `a\_b`, in a
+ * name as well as in a value, and in the text of an auto-link but not in its
+ * URL. `readHeader` undoes that too. Nothing here writes a backslash, so the
+ * escapes are always ClickUp's.
  */
 
 const BEGIN = "orchestrator:begin";
@@ -55,14 +61,35 @@ function legacyComment(name: string): RegExp {
   return new RegExp(`<!--[ \\t]*${escaped}[ \\t]*:[\\s\\S]*?-->[ \\t]*\\n?`, "gi");
 }
 
-/** `[url](url)`, which is what ClickUp makes of a bare URL. */
-const SELF_LINK = /^\[([^\]]+)\]\(\1\)$/;
+/**
+ * `[text](url)`, the shape ClickUp gives a bare URL.
+ *
+ * Only a link whose text, once unescaped, is its own URL is ClickUp's work;
+ * anything else is read as plain text.
+ */
+const LINK = /^\[(.+)\]\((.+)\)$/;
+
+/** A backslash before ASCII punctuation: a markdown escape. */
+const ESCAPE = /\\([!-\/:-@[-`{-~])/g;
 
 export type HeaderEntries = Record<string, string>;
 
-/** Undoes ClickUp's auto-linking, so a value reads back as it was written. */
-function unlink(value: string): string {
-  return SELF_LINK.exec(value)?.[1] ?? value;
+/** Undoes markdown's backslash escapes, so `a\_b` reads back as `a_b`. */
+function unescapeMarkdown(text: string): string {
+  return text.replace(ESCAPE, "$1");
+}
+
+/**
+ * Undoes what ClickUp does to a value on save — auto-linking and escaping — so
+ * it reads back as it was written.
+ */
+function restore(value: string): string {
+  const link = LINK.exec(value);
+  if (link) {
+    const [, text, url] = link;
+    if (unescapeMarkdown(text) === unescapeMarkdown(url)) return unescapeMarkdown(url);
+  }
+  return unescapeMarkdown(value);
 }
 
 /**
@@ -80,7 +107,7 @@ export function readHeader(description: string | null | undefined): HeaderEntrie
     const match = ENTRY.exec(line);
     if (!match) continue;
     const [, name, value] = match;
-    if (value !== "") entries[name] = unlink(value);
+    if (value !== "") entries[unescapeMarkdown(name)] = restore(value);
   }
   return entries;
 }

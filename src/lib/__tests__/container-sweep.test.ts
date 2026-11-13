@@ -395,6 +395,14 @@ describe("findTaskForWorktree", () => {
     expect(findTaskForWorktree(tasks, "https://example.com/pull/1")).toBeNull();
   });
 
+  it("finds a task whose header ClickUp escaped", () => {
+    // ClickUp stores `_` as `\\_`, in the name and in the path.
+    const worktree = "/home/u/worktrees/repo_x/feat-x";
+    const tasks = [task({ description: "orchestrator:begin\nworktree-repo\\_x: /home/u/worktrees/repo\\_x/feat-x\norchestrator:end" })];
+
+    expect(findTaskForWorktree(tasks, worktree)?.id).toBe("T-1");
+  });
+
   it("does not skip closed tasks: a finished ticket is the case worth naming", () => {
     expect(findTaskForWorktree([task({ status: "Done" })], WORKTREE)?.status).toBe("Done");
   });
