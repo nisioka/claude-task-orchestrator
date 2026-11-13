@@ -34,10 +34,29 @@ export interface GateSnapshot {
   scheduledPending: string[];
   /** The human's open pull requests as `owner/repo#number`. `null` when they could not be listed. */
   openPullRequests: string[] | null;
+  /**
+   * The open pull requests GitHub reports as conflicting with their base.
+   *
+   * A conflict changes nothing else about a pull request — not its number, not
+   * its place in the list — so without this a pull request falling into
+   * conflict while the human holds it would never wake a patrol to repair it.
+   */
+  conflictingPullRequests: string[];
+  /**
+   * Open pull requests whose mergeability GitHub had not computed yet.
+   *
+   * GitHub computes it lazily, on the first request after the base moves, and
+   * answers that request with "unknown". Such a pull request keeps the standing
+   * it had in the baseline instead of reading as "no longer conflicting": the
+   * next wake has the real answer, and flapping in between would cost two
+   * patrols for nothing.
+   */
+  undecidedPullRequests: string[];
   /** Child agents the daemon still holds, as `name|state`. */
   runningChildren: string[];
   /**
-   * The subset still working on an issue the AI owns, by name.
+   * The subset still working on something the AI answers for, by name: an issue
+   * the AI owns, or a human-held pull request it is keeping mergeable.
    *
    * Only these force a patrol while unchanged: a working child can stall with
    * its state still saying working, and only a patrol reading its progress can
@@ -93,9 +112,31 @@ export function normalizeSnapshot(snapshot: GateSnapshot): GateSnapshot {
     aiIssues: sorted(snapshot.aiIssues),
     scheduledPending: sorted(snapshot.scheduledPending),
     openPullRequests: snapshot.openPullRequests === null ? null : sorted(snapshot.openPullRequests),
+    // Baselines written before these fields existed lack them.
+    conflictingPullRequests: sorted(snapshot.conflictingPullRequests ?? []),
+    undecidedPullRequests: sorted(snapshot.undecidedPullRequests ?? []),
     runningChildren: sorted(snapshot.runningChildren),
     activeChildren: sorted(snapshot.activeChildren ?? []),
   };
+}
+
+/**
+ * Give the pull requests GitHub has not decided on the standing they had in
+ * the baseline. When the listing failed outright, the baseline's whole set
+ * stands: there is nothing better to compare with, and the failure already
+ * forces a patrol.
+ */
+export function settleUndecided(snapshot: GateSnapshot, baseline: GateSnapshot | null): GateSnapshot {
+  if (!baseline) return snapshot;
+  const undecided = new Set(snapshot.undecidedPullRequests);
+  const conflicting =
+    snapshot.openPullRequests === null
+      ? baseline.conflictingPullRequests
+      : [
+          ...snapshot.conflictingPullRequests,
+          ...baseline.conflictingPullRequests.filter((pr) => undecided.has(pr)),
+        ];
+  return { ...snapshot, conflictingPullRequests: [...new Set(conflicting)].sort() };
 }
 
 function sameSet(a: string[] | null, b: string[] | null): boolean {
@@ -109,6 +150,9 @@ export function describeChanges(before: GateSnapshot, after: GateSnapshot): stri
   if (!sameSet(before.aiIssues, after.aiIssues)) changes.push("AIのボールが変化");
   if (!sameSet(before.scheduledPending, after.scheduledPending)) changes.push("予約投入が変化");
   if (!sameSet(before.openPullRequests, after.openPullRequests)) changes.push("オープンPRが変化");
+  if (!sameSet(before.conflictingPullRequests, after.conflictingPullRequests)) {
+    changes.push("コンフリクトしたPRが変化");
+  }
   if (!sameSet(before.runningChildren, after.runningChildren)) changes.push("子エージェントが変化");
   return changes;
 }
@@ -122,8 +166,9 @@ function promote(state: GateState, lastPatrol: HeartbeatRecord | null): GateStat
 }
 
 export function decideGate(input: GateInput): GateDecision {
-  const snapshot = normalizeSnapshot(input.snapshot);
   const state = promote(input.state, input.lastPatrol);
+  const baseline = state.baseline ? normalizeSnapshot(state.baseline.snapshot) : null;
+  const snapshot = settleUndecided(normalizeSnapshot(input.snapshot), baseline);
   const reasons: string[] = [];
 
   if (snapshot.activeChildren.length > 0) {
@@ -146,7 +191,7 @@ export function decideGate(input: GateInput): GateDecision {
     }
   }
 
-  if (state.baseline) reasons.push(...describeChanges(normalizeSnapshot(state.baseline.snapshot), snapshot));
+  if (baseline) reasons.push(...describeChanges(baseline, snapshot));
 
   if (reasons.length === 0) return { verdict: "skip", reasons, state };
 
@@ -259,6 +304,8 @@ function isBaseline(value: unknown): value is GateBaseline {
     isList(snapshot.scheduledPending) &&
     isList(snapshot.runningChildren) &&
     (snapshot.activeChildren === undefined || isList(snapshot.activeChildren)) &&
+    (snapshot.conflictingPullRequests === undefined || isList(snapshot.conflictingPullRequests)) &&
+    (snapshot.undecidedPullRequests === undefined || isList(snapshot.undecidedPullRequests)) &&
     (snapshot.openPullRequests === null || isList(snapshot.openPullRequests))
   );
 }
@@ -283,7 +330,7 @@ export function gitHubRepositoryOf(remoteUrl: string): string | null {
 /**
  * Drop the pull requests that belong to another group's repositories.
  *
- * `gh search prs --author @me` answers across every repository the human
+ * A search for `author:@me` answers across every repository the human
  * touches, so an instance split by group would otherwise wake to the other
  * group's work — and under idle exit every such wake is a cold start. Only a
  * repository *shown* to be another group's is dropped (`foreign`, as

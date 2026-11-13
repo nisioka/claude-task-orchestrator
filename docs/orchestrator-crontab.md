@@ -172,8 +172,10 @@ and exits when the last client disconnects.
 （メッセージの取り込みなど）は、セッションの定期的な強制巡回（`ORCHESTRATOR_FULL_PATROL_SECONDS`）
 だけが拾っている。セッションを止めると、それも止まる。入力がタスクソースだけの系統なら、
 巡回が反応するものはすべてゲートの比較対象（AIのボールの `ID|ステータス|更新日時`、予約投入、
-自分のオープンPR、子エージェント）に現れる。その場合は強制巡回も要らない。
-オープンPRは `gh search prs --author @me` で全リポジトリぶん取るが、系統を分けているときは
+自分のオープンPRとそのうちコンフリクトしているもの、子エージェント）に現れる。その場合は強制巡回も要らない。
+オープンPRは GraphQL の検索 `is:pr is:open author:@me` で全リポジトリぶん取る。`gh search prs` は
+`mergeable` を返さず、PRがコンフリクトしても一覧の見た目は何も変わらないため。GitHub がまだ判定して
+いない PR は、前回の比較のときの扱いを引き継ぐ。系統を分けているときは
 もう一方の系統に登録されたリポジトリ（`repositories.json` の `group` と `origin` で判定）のものを外す。
 外さないと、もう一方の系統でPRが動くたびにこちらがコールドスタートする。
 有効にすると `ORCHESTRATOR_FULL_PATROL_SECONDS` の既定は1時間から1日（86400）に変わる。

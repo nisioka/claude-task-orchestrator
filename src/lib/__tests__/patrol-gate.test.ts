@@ -23,6 +23,8 @@ function snapshot(overrides: Partial<GateSnapshot> = {}): GateSnapshot {
     aiIssues: ["TASK-1|Todo|2026-08-06T10:00:00.000Z"],
     scheduledPending: [],
     openPullRequests: ["owner/repo#1"],
+    conflictingPullRequests: [],
+    undecidedPullRequests: [],
     runningChildren: [],
     activeChildren: [],
     ...overrides,
@@ -67,6 +69,7 @@ describe("decideGate", () => {
     ["AIのボールが変化", { aiIssues: ["TASK-1|Todo|2026-08-06T11:55:00.000Z"] }],
     ["予約投入が変化", { scheduledPending: ["TASK-9"] }],
     ["オープンPRが変化", { openPullRequests: [] }],
+    ["コンフリクトしたPRが変化", { conflictingPullRequests: ["owner/repo#1"] }],
   ])("%s なら巡回する", (reason, change) => {
     const decision = decideGate({
       snapshot: snapshot(change),
@@ -117,6 +120,73 @@ describe("decideGate", () => {
       fullPatrolSeconds: HOUR,
     });
     expect(decision.verdict).toBe("patrol");
+  });
+
+  it("番号も一覧も変わらないまま PR がコンフリクトしたら巡回する", () => {
+    const decision = decideGate({
+      snapshot: snapshot({ conflictingPullRequests: ["owner/repo#1"] }),
+      state: settled(),
+      lastPatrol: patrolAt("2026-08-06T11:40:00.000Z"),
+      now: NOW,
+      fullPatrolSeconds: HOUR,
+    });
+    expect(decision.verdict).toBe("patrol");
+    expect(decision.reasons).toEqual(["コンフリクトしたPRが変化"]);
+  });
+
+  it("GitHub が判定を出していない PR は、基準のときの扱いを引き継ぐ", () => {
+    const conflicted = snapshot({ conflictingPullRequests: ["owner/repo#1"] });
+    const decision = decideGate({
+      snapshot: snapshot({ undecidedPullRequests: ["owner/repo#1"] }),
+      state: settled(conflicted),
+      lastPatrol: patrolAt("2026-08-06T11:40:00.000Z"),
+      now: NOW,
+      fullPatrolSeconds: HOUR,
+    });
+    expect(decision.verdict).toBe("skip");
+  });
+
+  it("判定待ちの PR を新たなコンフリクトとは数えない", () => {
+    const decision = decideGate({
+      snapshot: snapshot({ undecidedPullRequests: ["owner/repo#1"] }),
+      state: settled(),
+      lastPatrol: patrolAt("2026-08-06T11:40:00.000Z"),
+      now: NOW,
+      fullPatrolSeconds: HOUR,
+    });
+    expect(decision.verdict).toBe("skip");
+  });
+
+  it("コンフリクトが解けたら巡回し、引き継いだ扱いを候補に残す", () => {
+    const base = snapshot({
+      openPullRequests: ["owner/repo#1", "owner/repo#2"],
+      conflictingPullRequests: ["owner/repo#1", "owner/repo#2"],
+    });
+    const decision = decideGate({
+      snapshot: snapshot({
+        openPullRequests: ["owner/repo#1", "owner/repo#2"],
+        undecidedPullRequests: ["owner/repo#2"],
+      }),
+      state: settled(base),
+      lastPatrol: patrolAt("2026-08-06T11:40:00.000Z"),
+      now: NOW,
+      fullPatrolSeconds: HOUR,
+    });
+    expect(decision.reasons).toEqual(["コンフリクトしたPRが変化"]);
+    expect(decision.state.candidate?.snapshot.conflictingPullRequests).toEqual(["owner/repo#2"]);
+  });
+
+  it("PRの一覧が取れなかった回は、基準のコンフリクトをそのまま持ち越す", () => {
+    const conflicted = snapshot({ conflictingPullRequests: ["owner/repo#1"] });
+    const decision = decideGate({
+      snapshot: snapshot({ openPullRequests: null }),
+      state: settled(conflicted),
+      lastPatrol: patrolAt("2026-08-06T11:40:00.000Z"),
+      now: NOW,
+      fullPatrolSeconds: HOUR,
+    });
+    expect(decision.reasons).not.toContain("コンフリクトしたPRが変化");
+    expect(decision.state.candidate?.snapshot.conflictingPullRequests).toEqual(["owner/repo#1"]);
   });
 
   it("PRの一覧が取れないときは巡回する", () => {
@@ -231,6 +301,20 @@ describe("parseGateState", () => {
 
   it("書いたものを読み戻せる", () => {
     expect(parseGateState(JSON.stringify(settled()))).toEqual(settled());
+  });
+
+  it("コンフリクトの欄が無い古い基準も読み、空として比べる", () => {
+    const { conflictingPullRequests: _c, undecidedPullRequests: _u, ...old } = snapshot();
+    const state = parseGateState(JSON.stringify({ baseline: { snapshot: old, at: "2026-08-06T11:30:00.000Z" }, candidate: null }));
+    expect(state.baseline).not.toBeNull();
+    const decision = decideGate({
+      snapshot: snapshot(),
+      state,
+      lastPatrol: patrolAt("2026-08-06T11:40:00.000Z"),
+      now: NOW,
+      fullPatrolSeconds: HOUR,
+    });
+    expect(decision.verdict).toBe("skip");
   });
 });
 

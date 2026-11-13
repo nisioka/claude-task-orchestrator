@@ -140,6 +140,16 @@ export interface OrchestratorConfig {
   childContextLimitTokens: number | null;
 
   /**
+   * The shortest gap between two rebases of one pull request the human holds.
+   *
+   * Measured from the pull request's last force push, which GitHub records, so
+   * it survives the session that dispatched the rebase. The base branch can
+   * move many times a day; following every move would keep the head moving
+   * under the human while they review it.
+   */
+  handedRebaseIntervalSeconds: number;
+
+  /**
    * The `claude` binary. Overridable so a fake agent can drive the whole
    * launch → observe → collect path without spending model usage.
    */
@@ -245,6 +255,7 @@ export function loadOrchestratorConfig(): OrchestratorConfig {
       "ORCHESTRATOR_CHILD_CONTEXT_LIMIT_TOKENS",
       400_000,
     ),
+    handedRebaseIntervalSeconds: parsePositiveInt("ORCHESTRATOR_HANDED_REBASE_INTERVAL_SECONDS", 43_200),
 
     claudeExecutable: process.env.ORCHESTRATOR_CLAUDE_BIN || "claude",
 
@@ -314,19 +325,34 @@ export function judgeAgentName(issueIdentifier: string): string {
   return `ai-judge-${assertIdentifier(issueIdentifier)}`;
 }
 
+/**
+ * An upkeep child keeps a pull request the human holds in a mergeable state —
+ * rebasing it when it falls into conflict — without taking the task back.
+ *
+ * Its own role, not an impl child under another name: the task's assignee is
+ * the human throughout, which is exactly what marks an impl child as one the
+ * human has taken over and must be left alone. The role is what tells the two
+ * apart.
+ */
+export function upkeepAgentName(issueIdentifier: string, repositoryLabel?: string): string {
+  const base = `ai-upkeep-${assertIdentifier(issueIdentifier)}`;
+  if (repositoryLabel === undefined) return base;
+  return `${base}${REPOSITORY_SEPARATOR}${assertRepositoryLabel(repositoryLabel)}`;
+}
+
 export type ParsedAgentName =
   | { role: "orchestrator" }
-  | { role: "impl" | "judge"; issueIdentifier: string; repositoryLabel?: string };
+  | { role: "impl" | "judge" | "upkeep"; issueIdentifier: string; repositoryLabel?: string };
 
 /** Inverse of the name builders. Returns `null` for anything we did not name. */
 export function parseAgentName(name: string): ParsedAgentName | null {
   if (name === ORCHESTRATOR_SESSION_NAME) return { role: "orchestrator" };
 
-  const match = /^ai-(impl|judge)-(.+)$/s.exec(name);
+  const match = /^ai-(impl|judge|upkeep)-(.+)$/s.exec(name);
   if (!match) return null;
-  const role = match[1] as "impl" | "judge";
+  const role = match[1] as "impl" | "judge" | "upkeep";
 
-  const separator = role === "impl" ? match[2].indexOf(REPOSITORY_SEPARATOR) : -1;
+  const separator = role === "judge" ? -1 : match[2].indexOf(REPOSITORY_SEPARATOR);
   const issueIdentifier = separator === -1 ? match[2] : match[2].slice(0, separator);
   if (!IDENTIFIER_PATTERN.test(issueIdentifier)) return null;
   if (separator === -1) return { role, issueIdentifier };

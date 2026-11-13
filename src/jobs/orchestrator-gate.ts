@@ -17,6 +17,7 @@ import { createTaskProvider } from "../lib/tasks/factory.js";
 import type { TaskGroup } from "../lib/tasks/types.js";
 import { loadWorkflow, offTheQueueStatuses } from "../lib/tasks/workflow.js";
 import { classifySchedules } from "./orchestrator-status.js";
+import { listOpenPullRequests, pullRequestKey, type OpenPullRequest } from "../lib/open-pull-requests.js";
 import {
   buildGateHeartbeat,
   decideGate,
@@ -34,9 +35,6 @@ import {
 } from "../lib/patrol-gate.js";
 
 const execFileAsync = promisify(execFile);
-
-/** Search results stop here; a list that reaches it may be missing the PR that changed. */
-const PULL_REQUEST_LIMIT = 200;
 
 /** The gate's answer, and the one line it prints. */
 export interface GateOutcome {
@@ -140,22 +138,42 @@ async function takeSnapshot(): Promise<GateSnapshot> {
   const running = agents.flatMap((agent) => {
     const parsed = parseAgentName(agent.name);
     if (!parsed || parsed.role === "orchestrator" || !isRunningAgent(agent, heldByDaemon)) return [];
-    return [{ agent, issueId: parsed.issueIdentifier }];
+    return [{ agent, issueId: parsed.issueIdentifier, role: parsed.role }];
   });
   const runningChildren = running.map(({ agent }) => `${agent.name}|${agent.state ?? "?"}`);
+  // An upkeep child works on an issue the human holds, by design, so the
+  // issue's owner says nothing about whose it is to watch: it is the AI's.
   const activeChildren = running
-    .filter(({ agent, issueId }) => agent.state !== "blocked" && aiIssueIds.has(issueId))
+    .filter(({ agent, issueId, role }) => agent.state !== "blocked" && (role === "upkeep" || aiIssueIds.has(issueId)))
     .map(({ agent }) => agent.name);
+
+  const pullRequests = await pullRequestSets(openPullRequests, repositories, config.group);
 
   return {
     aiIssues: aiIssues.map((issue) => `${issue.id}|${issue.status}|${issue.updatedAt}`),
     scheduledPending: classifySchedules(aiIssues, now, workflow).pending.map(({ issue }) => issue.id),
-    openPullRequests:
-      openPullRequests === null
-        ? null
-        : withoutForeignPullRequests(openPullRequests, await foreignRepositories(repositories, config.group)),
+    ...pullRequests,
     runningChildren,
     activeChildren,
+  };
+}
+
+/** The open pull requests, and which of them conflict, as the keys the gate compares. */
+async function pullRequestSets(
+  openPullRequests: OpenPullRequest[] | null,
+  repositories: { path: string; group?: TaskGroup }[],
+  group: TaskGroup | null,
+): Promise<Pick<GateSnapshot, "openPullRequests" | "conflictingPullRequests" | "undecidedPullRequests">> {
+  if (openPullRequests === null) {
+    return { openPullRequests: null, conflictingPullRequests: [], undecidedPullRequests: [] };
+  }
+  const foreign = await foreignRepositories(repositories, group);
+  const keys = (filter: (pr: OpenPullRequest) => boolean) =>
+    withoutForeignPullRequests(openPullRequests.filter(filter).map(pullRequestKey), foreign);
+  return {
+    openPullRequests: keys(() => true),
+    conflictingPullRequests: keys((pr) => pr.mergeable === "CONFLICTING"),
+    undecidedPullRequests: keys((pr) => pr.mergeable === "UNKNOWN"),
   };
 }
 
@@ -175,31 +193,6 @@ async function remoteRepositoryOf(path: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("git", ["-C", path, "remote", "get-url", "origin"]);
     return gitHubRepositoryOf(stdout);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The human's open pull requests across every repository, or `null` when `gh`
- * cannot answer. Another group's are dropped afterwards, in `takeSnapshot`.
- */
-async function listOpenPullRequests(): Promise<string[] | null> {
-  try {
-    const { stdout } = await execFileAsync(
-      "gh",
-      [
-        "search", "prs",
-        "--author", "@me",
-        "--state", "open",
-        "--limit", String(PULL_REQUEST_LIMIT),
-        "--json", "repository,number",
-      ],
-      { maxBuffer: 10 * 1024 * 1024 },
-    );
-    const rows = JSON.parse(stdout) as { repository?: { nameWithOwner?: string }; number?: number }[];
-    if (rows.length >= PULL_REQUEST_LIMIT) return null;
-    return rows.map((row) => `${row.repository?.nameWithOwner ?? "?"}#${row.number ?? "?"}`);
   } catch {
     return null;
   }
