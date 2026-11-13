@@ -29,8 +29,8 @@
  * ClickUp also stores the block as markdown, so it backslash-escapes the
  * punctuation markdown would read as syntax: `a_b` comes back as `a\_b`, in a
  * name as well as in a value, and in the text of an auto-link but not in its
- * URL. `readHeader` undoes that too. Nothing here writes a backslash, so the
- * escapes are always ClickUp's.
+ * URL. `readHeader` undoes that too. A backslash that is part of a value is
+ * escaped when written, so it reads back as itself rather than as an escape.
  */
 
 const BEGIN = "orchestrator:begin";
@@ -72,11 +72,19 @@ const LINK = /^\[(.+)\]\((.+)\)$/;
 /** A backslash before ASCII punctuation: a markdown escape. */
 const ESCAPE = /\\([!-\/:-@[-`{-~])/g;
 
+/** A backslash that markdown would read as an escape, were it left alone. */
+const ESCAPING_BACKSLASH = /\\(?=[!-\/:-@[-`{-~])/g;
+
 export type HeaderEntries = Record<string, string>;
 
 /** Undoes markdown's backslash escapes, so `a\_b` reads back as `a_b`. */
 function unescapeMarkdown(text: string): string {
   return text.replace(ESCAPE, "$1");
+}
+
+/** Escapes the backslashes `unescapeMarkdown` would otherwise take away. */
+function protectBackslashes(text: string): string {
+  return text.replace(ESCAPING_BACKSLASH, "\\\\");
 }
 
 /**
@@ -142,7 +150,9 @@ export function upsertHeader(
   for (const name of Object.keys(updates)) body = body.replace(legacyComment(name), "");
   body = body.replace(/^\s+/, "");
 
-  const lines = Object.entries(merged).map(([name, value]) => `${name}: ${value}`);
+  const lines = Object.entries(merged).map(
+    ([name, value]) => `${protectBackslashes(name)}: ${protectBackslashes(value)}`,
+  );
   if (lines.length === 0) return body;
 
   return [BEGIN, ...lines, END, "", body].join("\n").trimEnd() + "\n";

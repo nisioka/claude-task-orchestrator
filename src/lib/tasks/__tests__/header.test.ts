@@ -150,6 +150,17 @@ describe("upsertHeader", () => {
     expect(out.match(/worktree-repo/g)).toHaveLength(1);
   });
 
+  it("keeps a backslash written into a value, through a rewrite of another entry", () => {
+    const written = { note: "a\\_b\\\\c\\d" };
+    let d = upsertHeader(BODY, written);
+
+    expect(readHeader(d)).toEqual(written);
+
+    d = upsertHeader(d, { worktree: "/a" });
+
+    expect(readHeader(d)).toEqual({ ...written, worktree: "/a" });
+  });
+
   it("removes an entry ClickUp escaped when given an empty value", () => {
     const saved = savedByClickUp(upsertHeader(BODY, { "worktree-repo_a": "/abs/repo_a/wt", worktree: "/a" }));
 
