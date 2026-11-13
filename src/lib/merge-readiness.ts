@@ -6,8 +6,8 @@ import { promisify } from "node:util";
  *
  * Judged from GitHub's own state only: draft, mergeability, the checks on the
  * head commit, and a merge-order line in the body. Whatever cannot be proven
- * ready is held back, so the list errs towards showing less. Read-only: it
- * never merges, labels or comments.
+ * ready is held back, so the judgement errs towards calling less ready.
+ * Read-only: it never merges, labels or comments.
  *
  * Merge order is read from one line in the body and from nothing else:
  *
@@ -15,8 +15,8 @@ import { promisify } from "node:util";
  *
  * The line names the pull requests that must be merged first, separated by
  * spaces or commas, as `owner/repo#N`, `#N` (same repository) or a pull request
- * URL. A pull request with such a line stays off the list until every one it
- * names is merged. Lines inside fenced code blocks are ignored, so a body can
+ * URL. A pull request with such a line is held back until every one it names
+ * is merged. Lines inside fenced code blocks are ignored, so a body can
  * show the format without being bound by it.
  */
 
@@ -227,7 +227,7 @@ export interface WaitingPullRequest {
   number: number;
   title: string;
   url: string;
-  /** Nothing else holds it: once this one is merged, it should be on the list next. */
+  /** Nothing else holds it: once this one is merged, it may be merged next. */
   nextUp: boolean;
 }
 
@@ -240,10 +240,7 @@ export interface MergeablePullRequest {
   waiting: WaitingPullRequest[];
 }
 
-export interface HeldPullRequest {
-  repo: string;
-  number: number;
-  url: string;
+export interface HeldPullRequest extends MergeablePullRequest {
   reasons: string[];
 }
 
@@ -328,26 +325,24 @@ export function judgeMergeable(
   const ready: MergeablePullRequest[] = [];
   const held: HeldPullRequest[] = [];
   for (const { pr, own, order } of judged) {
-    if (own.length === 0 && order.length === 0) {
-      const key = refKey(pr);
-      ready.push({
-        repo: pr.repo,
-        number: pr.number,
-        title: pr.title,
-        url: pr.url,
-        waiting: judged
-          .filter((other) => other.waitingOn.includes(key))
-          .map((other) => ({
-            repo: other.pr.repo,
-            number: other.pr.number,
-            title: other.pr.title,
-            url: other.pr.url,
-            nextUp: other.own.length === 0 && other.order.length === 1,
-          })),
-      });
-    } else {
-      held.push({ repo: pr.repo, number: pr.number, url: pr.url, reasons: [...own, ...order] });
-    }
+    const key = refKey(pr);
+    const entry: MergeablePullRequest = {
+      repo: pr.repo,
+      number: pr.number,
+      title: pr.title,
+      url: pr.url,
+      waiting: judged
+        .filter((other) => other.waitingOn.includes(key))
+        .map((other) => ({
+          repo: other.pr.repo,
+          number: other.pr.number,
+          title: other.pr.title,
+          url: other.pr.url,
+          nextUp: other.own.length === 0 && other.order.length === 1,
+        })),
+    };
+    if (own.length === 0 && order.length === 0) ready.push(entry);
+    else held.push({ ...entry, reasons: [...own, ...order] });
   }
   return { ready, held };
 }

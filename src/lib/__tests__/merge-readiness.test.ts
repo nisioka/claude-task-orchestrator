@@ -210,8 +210,26 @@ describe("judgeMergeable", () => {
       { repo: "acme/web", number: 20, title: "acme/web#20", url: "https://github.com/acme/web/pull/20", nextUp: true },
     ]);
     expect(view.held).toEqual([
-      { repo: "acme/web", number: 20, url: "https://github.com/acme/web/pull/20", reasons: ["先に acme/api#10 のマージが要る"] },
+      {
+        repo: "acme/web",
+        number: 20,
+        title: "acme/web#20",
+        url: "https://github.com/acme/web/pull/20",
+        waiting: [],
+        reasons: ["先に acme/api#10 のマージが要る"],
+      },
     ]);
+  });
+
+  it("names the waiting one on a held pull request too", () => {
+    const view = judgeMergeable(
+      [pr("acme/web", 20, { body: "merge-after: acme/api#10" }), pr("acme/api", 10, { isDraft: true })],
+      none,
+    );
+    expect(view.ready).toEqual([]);
+    const api = view.held.find((p) => p.number === 10)!;
+    expect(api.reasons).toEqual(["draft"]);
+    expect(api.waiting.map((w) => [w.number, w.nextUp])).toEqual([[20, true]]);
   });
 
   it("does not promise the waiting one comes next when something else also holds it", () => {
