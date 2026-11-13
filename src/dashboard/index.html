@@ -226,11 +226,28 @@ function renderCron(panel) {
   return { cron: section(TITLES.cron, panel.data.length, table, true) };
 }
 
+function prLabel(p) { return `${p.repo.split("/").pop()}#${p.number}`; }
+
+// Only what may be merged now. A pull request waiting for another is named on that one's row instead.
+function renderMergeable(panel) {
+  if (!panel.ok) return failedSlots(["mergeable"], panel);
+  const { ready } = panel.data;
+  return { mergeable: section(TITLES.mergeable, ready.length, ready.length
+    ? el("ul", {}, ready.map((p) => el("li", {},
+        el("span", { class: "id" }, prLabel(p)),
+        el("span", { class: "title" },
+          el("a", { href: p.url, target: "_blank", rel: "noopener" }, p.title),
+          p.waiting.map((w) => el("div", { class: "tag" },
+            w.nextUp ? "マージすると次に出る: " : "これを待っている: ",
+            el("a", { href: w.url, target: "_blank", rel: "noopener", title: w.title }, prLabel(w))))))))
+    : el("p", { class: "empty" }, "なし")) };
+}
+
 function renderPrs(panel) {
   if (!panel.ok) return failedSlots(["prs"], panel);
   return { prs: section(TITLES.prs, panel.data.length, panel.data.length
     ? el("ul", {}, panel.data.map((p) => el("li", {},
-        el("span", { class: "id" }, `${p.repo.split("/").pop()}#${p.number}`),
+        el("span", { class: "id" }, prLabel(p)),
         el("a", { class: "title", href: p.url, target: "_blank", rel: "noopener" }, p.title))))
     : el("p", { class: "empty" }, "なし")) };
 }
@@ -257,11 +274,11 @@ async function setBadge(count) {
 
 // Display order. `wide` slots span the whole row.
 const LAYOUT = [
-  ["human"], ["prs"], ["week"], ["ai"], ["orchestrator"], ["children"], ["cron", true], ["recent", true],
+  ["human"], ["mergeable"], ["prs"], ["week"], ["ai"], ["orchestrator"], ["children"], ["cron", true], ["recent", true],
 ];
 
 const TITLES = {
-  human: "あなたのボール", prs: "自分のオープンPR", week: "この1週間の巡回", ai: "AIのボール",
+  human: "あなたのボール", mergeable: "今マージしてよいPR", prs: "自分のオープンPR", week: "この1週間の巡回", ai: "AIのボール",
   orchestrator: "常駐オーケストレータ", children: "実行中の子エージェント", cron: "cron ジョブ", recent: "直近の巡回の記録",
 };
 
@@ -272,6 +289,7 @@ const SOURCES = [
   ["patrols", renderPatrols],
   ["cron", renderCron],
   ["prs", renderPrs],
+  ["mergeable", renderMergeable],
 ];
 
 function failedSlots(slots, panel) {
