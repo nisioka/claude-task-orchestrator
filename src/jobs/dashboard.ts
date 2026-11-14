@@ -478,7 +478,7 @@ export interface PullRequestsView {
   judgeError: string | null;
 }
 
-export const NOT_JUDGED_REASON = "マージしてよいかをまだ判定していない";
+export const NOT_JUDGED_REASON = "マージ可否をまだ判定していない";
 
 function judgedRow(pr: MergeablePullRequest, ready: boolean, reasons: string[]): PullRequestRow {
   return { repo: pr.repo, number: pr.number, title: pr.title, url: pr.url, ready, reasons, waiting: pr.waiting };

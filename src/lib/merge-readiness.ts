@@ -264,7 +264,7 @@ function ownReasons(pr: OpenPullRequest): string[] {
   const reasons: string[] = [];
   if (pr.isDraft) reasons.push("draft");
   if (pr.mergeable === "CONFLICTING") reasons.push("コンフリクトしている");
-  else if (pr.mergeable !== "MERGEABLE") reasons.push("マージできるかを確かめられない");
+  else if (pr.mergeable !== "MERGEABLE") reasons.push("コンフリクトの有無を確かめられない");
   if (pr.mergeStateStatus === null || !PASSING_MERGE_STATES.has(pr.mergeStateStatus)) {
     reasons.push(`GitHub のマージ状態が ${pr.mergeStateStatus ?? "不明"}`);
   }

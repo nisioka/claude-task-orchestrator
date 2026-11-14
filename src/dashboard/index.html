@@ -63,9 +63,14 @@
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
   .note { font-size: 13px; overflow-wrap: anywhere; }
   .tag { font-size: 11px; color: var(--muted); }
+  /* Open pull requests: repository, number and verdict on the left; title, link and why on the right. */
+  ul.prs li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; align-items: start; }
+  .pr-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.4; }
+  .pr-meta .repo { font-size: 13px; overflow-wrap: anywhere; }
+  .verdict { font-size: 12px; color: var(--muted); }
+  .verdict.ok { color: var(--ok); font-weight: 600; }
   /* Not ready to merge: greyed, still a link. */
-  li.held > .id, li.held > .title > a { opacity: .45; }
-  .tag.ok { color: var(--ok); }
+  li.held .pr-meta, li.held .title > a { opacity: .45; }
   @media (max-width: 520px) { main { grid-template-columns: 1fr; padding: 12px; } header { padding: 12px; } }
 </style>
 </head>
@@ -238,18 +243,20 @@ function renderPrs(panel) {
   if (!panel.ok) return failedSlots(["prs"], panel);
   const { rows, listError, judgeError } = panel.data;
   const ready = rows.filter((r) => r.ready).length;
-  return { prs: section(TITLES.prs, `${rows.length}件・マージしてよい ${ready}件`, el("div", {},
+  return { prs: section(TITLES.prs, `${rows.length}件・マージ可 ${ready}件`, el("div", {},
     listError ? el("div", { class: "alert warn" }, `一覧を取得できませんでした。マージの判定で読めたPRだけを出しています: ${listError}`) : null,
-    judgeError ? el("div", { class: "alert warn" }, `マージしてよいかを判定できませんでした。どのPRもマージしてよいとは出していません: ${judgeError}`) : null,
+    judgeError ? el("div", { class: "alert warn" }, `マージ可否を判定できませんでした。どのPRもマージ可とは出していません: ${judgeError}`) : null,
     rows.length
-      ? el("ul", {}, rows.map((p) => el("li", { class: p.ready ? null : "held" },
-          el("span", { class: "id" }, prLabel(p)),
-          el("span", { class: "title" },
+      ? el("ul", { class: "prs" }, rows.map((p) => el("li", { class: p.ready ? null : "held" },
+          el("div", { class: "pr-meta" },
+            el("span", { class: "repo" }, p.repo.split("/").pop()),
+            el("span", { class: "id" }, `#${p.number}`),
+            el("span", { class: p.ready ? "verdict ok" : "verdict" }, p.ready ? "マージ可" : "マージ不可")),
+          el("div", { class: "title" },
             el("a", { href: p.url, target: "_blank", rel: "noopener" }, p.title),
-            p.ready ? el("div", { class: "tag ok" }, "マージしてよい") : null,
             p.reasons.map((r) => el("div", { class: "tag" }, r)),
             p.waiting.map((w) => el("div", { class: "tag" },
-              w.nextUp ? "マージすると次にマージできる: " : "これを待っている: ",
+              w.nextUp ? "これの次にマージ可: " : "これを待っている: ",
               el("a", { href: w.url, target: "_blank", rel: "noopener", title: w.title }, prLabel(w))))))))
       : el("p", { class: "empty" }, "なし"))) };
 }

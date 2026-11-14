@@ -184,7 +184,7 @@ describe("judgeMergeable", () => {
   it.each<[string, Partial<OpenPullRequest>, string]>([
     ["a draft", { isDraft: true }, "draft"],
     ["a conflict", { mergeable: "CONFLICTING" }, "コンフリクトしている"],
-    ["an unknown mergeability", { mergeable: "UNKNOWN" }, "マージできるかを確かめられない"],
+    ["an unknown mergeability", { mergeable: "UNKNOWN" }, "コンフリクトの有無を確かめられない"],
     ["a merge GitHub blocks", { mergeStateStatus: "BLOCKED" }, "GitHub のマージ状態が BLOCKED"],
     ["a merge state it does not know", { mergeStateStatus: "SOMETHING_NEW" }, "GitHub のマージ状態が SOMETHING_NEW"],
     ["failing checks", { checks: { state: "failed", detail: "build" } }, "チェックが失敗: build"],
