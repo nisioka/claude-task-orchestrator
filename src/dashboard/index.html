@@ -63,6 +63,14 @@
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
   .note { font-size: 13px; overflow-wrap: anywhere; }
   .tag { font-size: 11px; color: var(--muted); }
+  /* Open pull requests: repository, number and verdict on the left; title, link and why on the right. */
+  ul.prs li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; align-items: start; }
+  .pr-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.4; }
+  .pr-meta .repo { font-size: 13px; overflow-wrap: anywhere; }
+  .verdict { font-size: 12px; color: var(--muted); }
+  .verdict.ok { color: var(--ok); font-weight: 600; }
+  /* Not ready to merge: greyed, still a link. */
+  li.held .pr-meta, li.held .title > a { opacity: .45; }
   @media (max-width: 520px) { main { grid-template-columns: 1fr; padding: 12px; } header { padding: 12px; } }
 </style>
 </head>
@@ -106,9 +114,10 @@ function jst(iso) {
 
 function tokens(n) { return n === null ? "不明" : `${Math.round(n / 1000)}k`; }
 
+// `count` is a number of items, or a string shown as it is.
 function section(title, count, body, wide) {
   return el("section", { class: wide ? "wide" : null },
-    el("h2", {}, title, count === null ? null : el("span", { class: "count" }, `${count}件`)),
+    el("h2", {}, title, count === null ? null : el("span", { class: "count" }, typeof count === "string" ? count : `${count}件`)),
     body);
 }
 
@@ -228,28 +237,28 @@ function renderCron(panel) {
 
 function prLabel(p) { return `${p.repo.split("/").pop()}#${p.number}`; }
 
-// Only what may be merged now. A pull request waiting for another is named on that one's row instead.
-function renderMergeable(panel) {
-  if (!panel.ok) return failedSlots(["mergeable"], panel);
-  const { ready } = panel.data;
-  return { mergeable: section(TITLES.mergeable, ready.length, ready.length
-    ? el("ul", {}, ready.map((p) => el("li", {},
-        el("span", { class: "id" }, prLabel(p)),
-        el("span", { class: "title" },
-          el("a", { href: p.url, target: "_blank", rel: "noopener" }, p.title),
-          p.waiting.map((w) => el("div", { class: "tag" },
-            w.nextUp ? "マージすると次に出る: " : "これを待っている: ",
-            el("a", { href: w.url, target: "_blank", rel: "noopener", title: w.title }, prLabel(w))))))))
-    : el("p", { class: "empty" }, "なし")) };
-}
-
+// What may be merged now comes first; the rest is greyed with why. A pull request waiting for
+// another is named on that one's row too.
 function renderPrs(panel) {
   if (!panel.ok) return failedSlots(["prs"], panel);
-  return { prs: section(TITLES.prs, panel.data.length, panel.data.length
-    ? el("ul", {}, panel.data.map((p) => el("li", {},
-        el("span", { class: "id" }, prLabel(p)),
-        el("a", { class: "title", href: p.url, target: "_blank", rel: "noopener" }, p.title))))
-    : el("p", { class: "empty" }, "なし")) };
+  const { rows, listError, judgeError } = panel.data;
+  const ready = rows.filter((r) => r.ready).length;
+  return { prs: section(TITLES.prs, `${rows.length}件・マージ可 ${ready}件`, el("div", {},
+    listError ? el("div", { class: "alert warn" }, `一覧を取得できませんでした。マージの判定で読めたPRだけを出しています: ${listError}`) : null,
+    judgeError ? el("div", { class: "alert warn" }, `マージ可否を判定できませんでした。どのPRもマージ可とは出していません: ${judgeError}`) : null,
+    rows.length
+      ? el("ul", { class: "prs" }, rows.map((p) => el("li", { class: p.ready ? null : "held" },
+          el("div", { class: "pr-meta" },
+            el("span", { class: "repo" }, p.repo.split("/").pop()),
+            el("span", { class: "id" }, `#${p.number}`),
+            el("span", { class: p.ready ? "verdict ok" : "verdict" }, p.ready ? "マージ可" : "マージ不可")),
+          el("div", { class: "title" },
+            el("a", { href: p.url, target: "_blank", rel: "noopener" }, p.title),
+            p.reasons.map((r) => el("div", { class: "tag" }, r)),
+            p.waiting.map((w) => el("div", { class: "tag" },
+              w.nextUp ? "これの次にマージ可: " : "これを待っている: ",
+              el("a", { href: w.url, target: "_blank", rel: "noopener", title: w.title }, prLabel(w))))))))
+      : el("p", { class: "empty" }, "なし"))) };
 }
 
 // The human's ball, counted on the tab icon, so a waiting item shows without opening the tab.
@@ -274,11 +283,11 @@ async function setBadge(count) {
 
 // Display order. `wide` slots span the whole row.
 const LAYOUT = [
-  ["human"], ["mergeable"], ["prs"], ["week"], ["ai"], ["orchestrator"], ["children"], ["cron", true], ["recent", true],
+  ["human"], ["prs"], ["week"], ["ai"], ["orchestrator"], ["children"], ["cron", true], ["recent", true],
 ];
 
 const TITLES = {
-  human: "あなたのボール", mergeable: "今マージしてよいPR", prs: "自分のオープンPR", week: "この1週間の巡回", ai: "AIのボール",
+  human: "あなたのボール", prs: "自分のオープンPR", week: "この1週間の巡回", ai: "AIのボール",
   orchestrator: "常駐オーケストレータ", children: "実行中の子エージェント", cron: "cron ジョブ", recent: "直近の巡回の記録",
 };
 
@@ -289,7 +298,6 @@ const SOURCES = [
   ["patrols", renderPatrols],
   ["cron", renderCron],
   ["prs", renderPrs],
-  ["mergeable", renderMergeable],
 ];
 
 function failedSlots(slots, panel) {

@@ -2,13 +2,18 @@ import { describe, it, expect } from "vitest";
 import { homedir } from "node:os";
 import {
   buildStatusView,
+  combinePullRequests,
+  NOT_JUDGED_REASON,
   parseCronStarts,
   parseCronTargets,
   parseOpenPrs,
   summarizeLogTail,
   summarizePatrols,
+  type Panel,
+  type PullRequestView,
 } from "../dashboard.js";
 import { formatRunMarker } from "../../lib/run-log.js";
+import type { MergeableView } from "../../lib/merge-readiness.js";
 import type { OrchestratorSnapshot } from "../orchestrator-status.js";
 import type { Task } from "../../lib/tasks/types.js";
 import type { WorkflowStatuses } from "../../lib/tasks/workflow.js";
@@ -264,5 +269,93 @@ describe("parseOpenPrs", () => {
     expect(parseOpenPrs(json)).toEqual([
       { repo: "o/r", number: 12, title: "Fix a thing", url: "https://github.com/o/r/pull/12" },
     ]);
+  });
+});
+
+describe("combinePullRequests", () => {
+  const at = "2026-11-14T00:00:00.000Z";
+  const listed = (repo: string, number: number): PullRequestView => ({
+    repo,
+    number,
+    title: `${repo}#${number}`,
+    url: `https://github.com/${repo}/pull/${number}`,
+  });
+  const list = (...prs: PullRequestView[]): Panel<PullRequestView[]> => ({ ok: true, data: prs, fetchedAt: at });
+  const judged = (data: MergeableView): Panel<MergeableView> => ({ ok: true, data, fetchedAt: at });
+  const failed = (error: string): Panel<never> => ({ ok: false, error, fetchedAt: at });
+
+  const waiting = { ...listed("acme/web", 20), nextUp: true };
+  const judgement: MergeableView = {
+    ready: [{ ...listed("acme/api", 10), waiting: [waiting] }],
+    held: [
+      { ...listed("acme/web", 20), waiting: [], reasons: ["先に acme/api#10 のマージが要る"] },
+      { ...listed("acme/docs", 3), waiting: [], reasons: ["チェックが失敗: build"] },
+    ],
+  };
+
+  it("lists the ready ones first and keeps the rest with why they are held", () => {
+    const panel = combinePullRequests(
+      list(listed("acme/docs", 3), listed("acme/web", 20), listed("acme/api", 10)),
+      judged(judgement),
+    );
+    expect(panel).toEqual({
+      ok: true,
+      fetchedAt: at,
+      data: {
+        rows: [
+          { ...listed("acme/api", 10), ready: true, reasons: [], waiting: [waiting] },
+          { ...listed("acme/docs", 3), ready: false, reasons: ["チェックが失敗: build"], waiting: [] },
+          { ...listed("acme/web", 20), ready: false, reasons: ["先に acme/api#10 のマージが要る"], waiting: [] },
+        ],
+        listError: null,
+        judgeError: null,
+      },
+    });
+  });
+
+  it("does not call a listed pull request ready when the judgement has not seen it", () => {
+    const panel = combinePullRequests(list(listed("acme/api", 10), listed("acme/api", 11)), judged(judgement));
+    expect(panel.ok && panel.data.rows.find((r) => r.number === 11)).toEqual({
+      ...listed("acme/api", 11),
+      ready: false,
+      reasons: [NOT_JUDGED_REASON],
+      waiting: [],
+    });
+  });
+
+  it("matches the two reads regardless of the repository's case", () => {
+    const panel = combinePullRequests(list(listed("Acme/API", 10)), judged(judgement));
+    expect(panel.ok && panel.data.rows.filter((r) => r.number === 10).map((r) => r.ready)).toEqual([true]);
+  });
+
+  it("shows the listing with nothing ready when the judgement failed", () => {
+    const panel = combinePullRequests(list(listed("acme/api", 10)), failed("rate limited"));
+    expect(panel).toEqual({
+      ok: true,
+      fetchedAt: at,
+      data: {
+        rows: [{ ...listed("acme/api", 10), ready: false, reasons: [], waiting: [] }],
+        listError: null,
+        judgeError: "rate limited",
+      },
+    });
+  });
+
+  it("shows what the judgement read when the listing failed", () => {
+    const panel = combinePullRequests(failed("gh: timeout"), judged(judgement));
+    expect(panel.ok && panel.data.listError).toBe("gh: timeout");
+    expect(panel.ok && panel.data.rows.map((r) => [r.number, r.ready, r.title])).toEqual([
+      [10, true, "acme/api#10"],
+      [20, false, "acme/web#20"],
+      [3, false, "acme/docs#3"],
+    ]);
+  });
+
+  it("fails only when both reads failed", () => {
+    expect(combinePullRequests(failed("gh: timeout"), failed("rate limited"))).toEqual({
+      ok: false,
+      error: "一覧: gh: timeout / 判定: rate limited",
+      fetchedAt: at,
+    });
   });
 });

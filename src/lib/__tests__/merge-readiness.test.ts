@@ -184,7 +184,7 @@ describe("judgeMergeable", () => {
   it.each<[string, Partial<OpenPullRequest>, string]>([
     ["a draft", { isDraft: true }, "draft"],
     ["a conflict", { mergeable: "CONFLICTING" }, "コンフリクトしている"],
-    ["an unknown mergeability", { mergeable: "UNKNOWN" }, "マージできるかを確かめられない"],
+    ["an unknown mergeability", { mergeable: "UNKNOWN" }, "コンフリクトの有無を確かめられない"],
     ["a merge GitHub blocks", { mergeStateStatus: "BLOCKED" }, "GitHub のマージ状態が BLOCKED"],
     ["a merge state it does not know", { mergeStateStatus: "SOMETHING_NEW" }, "GitHub のマージ状態が SOMETHING_NEW"],
     ["failing checks", { checks: { state: "failed", detail: "build" } }, "チェックが失敗: build"],
@@ -210,8 +210,26 @@ describe("judgeMergeable", () => {
       { repo: "acme/web", number: 20, title: "acme/web#20", url: "https://github.com/acme/web/pull/20", nextUp: true },
     ]);
     expect(view.held).toEqual([
-      { repo: "acme/web", number: 20, url: "https://github.com/acme/web/pull/20", reasons: ["先に acme/api#10 のマージが要る"] },
+      {
+        repo: "acme/web",
+        number: 20,
+        title: "acme/web#20",
+        url: "https://github.com/acme/web/pull/20",
+        waiting: [],
+        reasons: ["先に acme/api#10 のマージが要る"],
+      },
     ]);
+  });
+
+  it("names the waiting one on a held pull request too", () => {
+    const view = judgeMergeable(
+      [pr("acme/web", 20, { body: "merge-after: acme/api#10" }), pr("acme/api", 10, { isDraft: true })],
+      none,
+    );
+    expect(view.ready).toEqual([]);
+    const api = view.held.find((p) => p.number === 10)!;
+    expect(api.reasons).toEqual(["draft"]);
+    expect(api.waiting.map((w) => [w.number, w.nextUp])).toEqual([[20, true]]);
   });
 
   it("does not promise the waiting one comes next when something else also holds it", () => {

@@ -17,13 +17,19 @@ import { GATE_HEARTBEAT_MARKER } from "../lib/patrol-gate.js";
 import { agentSubject, loadOrchestratorConfig, parseAgentName } from "../lib/orchestrator-config.js";
 import { humanDutyByStatus } from "../lib/tasks/workflow.js";
 import { parseRunMarker } from "../lib/run-log.js";
-import { collectMergeablePrs } from "../lib/merge-readiness.js";
+import {
+  collectMergeablePrs,
+  refKey,
+  type MergeablePullRequest,
+  type MergeableView,
+  type WaitingPullRequest,
+} from "../lib/merge-readiness.js";
 import type { Task } from "../lib/tasks/types.js";
 
 /**
  * A local web dashboard over the same state `orchestrator-status` reads, plus
- * what only this machine knows: the patrol log, cron job logs, open PRs and
- * which of them may be merged now.
+ * what only this machine knows: the patrol log, cron job logs, and open PRs
+ * with which of them may be merged now.
  *
  * Read-only. It never changes a task or an agent. Each panel is
  * fetched on its own and fails on its own, so one unreachable source does not
@@ -454,9 +460,79 @@ async function openPrs(): Promise<PullRequestView[]> {
   return parseOpenPrs(stdout);
 }
 
+export interface PullRequestRow extends PullRequestView {
+  /** Judged mergeable now. False whenever it was not judged, so an unread pull request never looks ready. */
+  ready: boolean;
+  /** Why it is not ready. Empty when the judgement as a whole could not be read; the panel says so instead. */
+  reasons: string[];
+  /** Open pull requests whose merge-after line names this one. */
+  waiting: WaitingPullRequest[];
+}
+
+export interface PullRequestsView {
+  /** Ready ones first, then the rest, each in the order the listing gave them. */
+  rows: PullRequestRow[];
+  /** The listing could not be read; the rows come from the judgement alone. */
+  listError: string | null;
+  /** The judgement could not be read; no row is ready. */
+  judgeError: string | null;
+}
+
+export const NOT_JUDGED_REASON = "マージ可否をまだ判定していない";
+
+function judgedRow(pr: MergeablePullRequest, ready: boolean, reasons: string[]): PullRequestRow {
+  return { repo: pr.repo, number: pr.number, title: pr.title, url: pr.url, ready, reasons, waiting: pr.waiting };
+}
+
+/**
+ * One list of open pull requests from the listing and the merge judgement, read
+ * apart. Either one alone still fills the list: the listing without the
+ * judgement shows every row as not ready, and the judgement without the listing
+ * shows the pull requests it judged.
+ */
+export function combinePullRequests(
+  list: Panel<PullRequestView[]>,
+  judgement: Panel<MergeableView>,
+): Panel<PullRequestsView> {
+  const fetchedAt = [list.fetchedAt, judgement.fetchedAt].sort()[0];
+  if (!list.ok && !judgement.ok) {
+    return { ok: false, error: `一覧: ${list.error} / 判定: ${judgement.error}`, fetchedAt };
+  }
+
+  const judged = new Map<string, PullRequestRow>();
+  if (judgement.ok) {
+    for (const pr of judgement.data.ready) judged.set(refKey(pr), judgedRow(pr, true, []));
+    for (const pr of judgement.data.held) judged.set(refKey(pr), judgedRow(pr, false, pr.reasons));
+  }
+
+  const rows = new Map<string, PullRequestRow>();
+  for (const pr of list.ok ? list.data : []) {
+    const key = refKey(pr);
+    rows.set(key, judged.get(key) ?? {
+      ...pr,
+      ready: false,
+      reasons: judgement.ok ? [NOT_JUDGED_REASON] : [],
+      waiting: [],
+    });
+  }
+  // Opened or closed between the two reads: shown as the judgement saw it.
+  for (const [key, row] of judged) if (!rows.has(key)) rows.set(key, row);
+
+  const all = [...rows.values()];
+  return {
+    ok: true,
+    data: {
+      rows: [...all.filter((row) => row.ready), ...all.filter((row) => !row.ready)],
+      listError: list.ok ? null : list.error,
+      judgeError: judgement.ok ? null : judgement.error,
+    },
+    fetchedAt,
+  };
+}
+
 // ─── Serving ────────────────────────────────────────────────────────
 
-type Panel<T> = { ok: true; data: T; fetchedAt: string } | { ok: false; error: string; fetchedAt: string };
+export type Panel<T> = { ok: true; data: T; fetchedAt: string } | { ok: false; error: string; fetchedAt: string };
 
 /** One fetch in flight at a time, reused until it is `ttlMs` old. Failures are not kept. */
 function cached<T>(ttlMs: number, load: () => Promise<T>): () => Promise<Panel<T>> {
@@ -490,12 +566,15 @@ export async function runDashboard(): Promise<void> {
   const port = Number(process.env.DASHBOARD_PORT || DEFAULT_PORT);
   const syslogPath = process.env.DASHBOARD_SYSLOG_PATH || DEFAULT_SYSLOG_PATH;
 
+  // Read apart and cached apart, so either one failing leaves the other to fill the list.
+  const openPrList = cached(PRS_TTL_MS, openPrs);
+  const mergeJudgement = cached(PRS_TTL_MS, () => collectMergeablePrs());
+
   const panels = {
     status: cached(STATUS_TTL_MS, async () => buildStatusView(await collectOrchestratorSnapshot())),
     patrols: uncached(async () => summarizePatrols(await readFile(config.heartbeatPath, "utf-8"), new Date())),
     cron: cached(CRON_TTL_MS, () => cronJobs(syslogPath)),
-    prs: cached(PRS_TTL_MS, openPrs),
-    mergeable: cached(PRS_TTL_MS, () => collectMergeablePrs()),
+    prs: async () => combinePullRequests(...(await Promise.all([openPrList(), mergeJudgement()]))),
   };
 
   const send = (res: ServerResponse, code: number, type: string, body: string) => {
