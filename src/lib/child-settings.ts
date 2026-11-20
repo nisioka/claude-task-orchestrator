@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -11,7 +11,9 @@ import { join } from "node:path";
  *
  * - `impl.json`: the repository's local settings plus the instance overlay. A
  *   child starts in another repository's worktree, so without this it would
- *   lose the permission rules it has always had
+ *   lose the permission rules it has always had. Written even when both are
+ *   absent (as `{}`): the rendered prompt names the path, and a session reads
+ *   that prompt only once, so the path must not come and go with the files
  * - `judge.json`: the same, plus the repository's own `CLAUDE.md` left out. A
  *   judgement child starts here, and that file is the orchestrator's design
  *   document — read on every turn, used on none. The rules a judgement child
@@ -27,8 +29,7 @@ import { join } from "node:path";
 export type SettingsObject = Record<string, unknown>;
 
 export interface ChildSettingsPaths {
-  /** `null` when there is nothing to pass: no local settings and no overlay. */
-  impl: string | null;
+  impl: string;
   judge: string;
   orchestrator: string;
 }
@@ -84,17 +85,22 @@ export function composeChildSettings(input: {
   local: SettingsObject | null;
   overlay: SettingsObject | null;
   repoDir: string;
-}): { impl: SettingsObject | null; judge: SettingsObject; orchestrator: SettingsObject } {
+}): { impl: SettingsObject; judge: SettingsObject; orchestrator: SettingsObject } {
   const exclude = { claudeMdExcludes: repositoryClaudeMdFiles(input.repoDir) };
-  const impl = input.local || input.overlay ? mergeSettings(input.local, input.overlay) : null;
   return {
-    impl,
+    impl: mergeSettings(input.local, input.overlay),
     judge: mergeSettings(input.local, input.overlay, exclude),
     orchestrator: exclude,
   };
 }
 
-/** Write the three files under `<stateDir>/child-settings/` and return their paths. */
+/**
+ * Write the three files under `<stateDir>/child-settings/` and return their paths.
+ *
+ * Each is written beside itself and renamed into place: the resident session
+ * may start a child while this runs, and a half-written file would either fail
+ * the launch or be skipped, letting a judgement child read the `CLAUDE.md`.
+ */
 export async function writeChildSettings(input: {
   stateDir: string;
   repoDir: string;
@@ -109,11 +115,13 @@ export async function writeChildSettings(input: {
   await mkdir(dir, { recursive: true });
   const write = async (name: string, settings: SettingsObject) => {
     const path = join(dir, name);
-    await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
+    const temporary = `${path}.${process.pid}.tmp`;
+    await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
+    await rename(temporary, path);
     return path;
   };
   return {
-    impl: composed.impl ? await write("impl.json", composed.impl) : null,
+    impl: await write("impl.json", composed.impl),
     judge: await write("judge.json", composed.judge),
     orchestrator: await write("orchestrator.json", composed.orchestrator),
   };

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -39,8 +39,8 @@ describe("composeChildSettings", () => {
     expect(impl).not.toHaveProperty("claudeMdExcludes");
   });
 
-  it("passes nothing to an implementation child when there is nothing to pass", () => {
-    expect(composeChildSettings({ local: null, overlay: null, repoDir: "/repo" }).impl).toBeNull();
+  it("gives an implementation child an empty file when there is nothing to pass", () => {
+    expect(composeChildSettings({ local: null, overlay: null, repoDir: "/repo" }).impl).toEqual({});
   });
 
   it("leaves the repository's CLAUDE.md out of a judgement child, by absolute path", () => {
@@ -84,7 +84,7 @@ describe("readSettingsFile / writeChildSettings", () => {
 
     const paths = await writeChildSettings({ stateDir: join(dir, "state"), repoDir, overlayPath: join(dir, "overlay.json") });
 
-    expect(JSON.parse(await readFile(paths.impl!, "utf-8"))).toEqual({
+    expect(JSON.parse(await readFile(paths.impl, "utf-8"))).toEqual({
       permissions: { allow: ["Read"] },
       enabledPlugins: { "x@m": false },
     });
@@ -95,9 +95,16 @@ describe("readSettingsFile / writeChildSettings", () => {
     expect(paths.orchestrator).toBe(join(dir, "state", "child-settings", "orchestrator.json"));
   });
 
-  it("writes no implementation file when the repository has no local settings and there is no overlay", async () => {
-    const paths = await writeChildSettings({ stateDir: dir, repoDir: join(dir, "repo"), overlayPath: join(dir, "none.json") });
+  it("empties the implementation file when the settings it came from are gone, instead of leaving the old one", async () => {
+    const repoDir = join(dir, "repo");
+    await writeFile(join(dir, "overlay.json"), JSON.stringify({ enabledPlugins: { "x@m": false } }));
+    const first = await writeChildSettings({ stateDir: dir, repoDir, overlayPath: join(dir, "overlay.json") });
+    await rm(join(dir, "overlay.json"));
 
-    expect(paths.impl).toBeNull();
+    const second = await writeChildSettings({ stateDir: dir, repoDir, overlayPath: join(dir, "overlay.json") });
+
+    expect(second.impl).toBe(first.impl);
+    expect(JSON.parse(await readFile(second.impl, "utf-8"))).toEqual({});
+    expect((await readdir(join(dir, "child-settings"))).sort()).toEqual(["impl.json", "judge.json", "orchestrator.json"]);
   });
 });

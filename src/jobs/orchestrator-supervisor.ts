@@ -597,7 +597,7 @@ export async function runOrchestratorSupervisor(
       repositoriesPath: appConfig.repositoriesPath ?? DEFAULT_REPOSITORIES_PATH,
       claudeBin: config.claudeExecutable,
       claudeConfigDir: config.claudeConfigDir,
-      childSettingsFlag: settings.impl ? settingsFlag(settings.impl) : "",
+      childSettingsFlag: settingsFlag(settings.impl),
       judgeSettingsFlag: settingsFlag(settings.judge),
     },
   );
