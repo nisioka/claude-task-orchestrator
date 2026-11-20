@@ -62,6 +62,19 @@ describe("renderPromptText", () => {
     );
   });
 
+  it("passes the judgement child's settings flag through, and drops it when there is none", () => {
+    const text = 'claude --bg {{judgeSettingsFlag}} --name x "go"';
+
+    expect(
+      renderPromptText(text, {
+        names: {},
+        promptDir: "/out",
+        instance: { judgeSettingsFlag: "--settings '/state/child-settings/judge.json'" },
+      }),
+    ).toBe("claude --bg --settings '/state/child-settings/judge.json' --name x \"go\"");
+    expect(renderPromptText(text, { names: {}, promptDir: "/out" })).toBe('claude --bg  --name x "go"');
+  });
+
   it("points repoDir at the core when nothing embeds it", () => {
     // Standalone, the two are the same place; a separate default would send the
     // prompts to a path that does not exist.

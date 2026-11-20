@@ -245,6 +245,13 @@ describe("buildLaunchArgs", () => {
     expect(args).not.toContain("--print");
   });
 
+  it("passes a settings file before the prompt, and none when not given", () => {
+    const args = buildLaunchArgs({ ...base, settings: "/state/child-settings/orchestrator.json" });
+
+    expect(args.slice(-3)).toEqual(["--settings", "/state/child-settings/orchestrator.json", base.prompt]);
+    expect(buildLaunchArgs(base)).not.toContain("--settings");
+  });
+
   it("does not pass --session-id — the daemon overrides it under --bg", () => {
     expect(buildLaunchArgs(base)).not.toContain("--session-id");
   });

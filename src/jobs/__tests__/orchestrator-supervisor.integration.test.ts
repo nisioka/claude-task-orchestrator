@@ -122,6 +122,7 @@ beforeEach(async () => {
   vi.stubEnv("ORCHESTRATOR_CLAUDE_BIN", FAKE_CLAUDE);
   vi.stubEnv("ORCHESTRATOR_STARTUP_GRACE_SECONDS", "1");
   vi.stubEnv("ORCHESTRATOR_DAEMON_SOCK_DIR", join(workDir, "sockets"));
+  vi.stubEnv("ORCHESTRATOR_CHILD_SETTINGS_PATH", join(workDir, "child-settings-overlay.json"));
 
   vi.stubEnv("FAKE_CLAUDE_REGISTRY", registryPath);
   vi.stubEnv("FAKE_CLAUDE_HOME", workDir);
@@ -234,6 +235,16 @@ describe("runOrchestratorSupervisor", () => {
     const agents = await readRegistry();
     expect(agents.filter((a) => a.name === "ai-orchestrator")).toHaveLength(1);
     expect(await recordedSessionId()).toBe(agents[0].sessionId);
+  });
+
+  it("writes the judgement child's and its own settings, leaving the repository's CLAUDE.md out", async () => {
+    vi.stubEnv("ORCHESTRATOR_REPO_DIR", "/repo");
+    await run();
+
+    const judge = JSON.parse(await readFile(join(workDir, "child-settings", "judge.json"), "utf-8"));
+    const own = JSON.parse(await readFile(join(workDir, "child-settings", "orchestrator.json"), "utf-8"));
+    expect(judge.claudeMdExcludes).toEqual(["/repo/CLAUDE.md", "/repo/CLAUDE.local.md"]);
+    expect(own).toEqual({ claudeMdExcludes: ["/repo/CLAUDE.md", "/repo/CLAUDE.local.md"] });
   });
 
   it("tells the human how to join the session it started", async () => {
