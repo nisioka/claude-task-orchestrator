@@ -156,6 +156,13 @@ export interface OrchestratorConfig {
   claudeExecutable: string;
 
   /**
+   * Settings the instance adds to every child's `--settings`, typically the
+   * plugins no child uses (`ORCHESTRATOR_CHILD_SETTINGS_PATH`). A missing file
+   * adds nothing; see `child-settings.ts`.
+   */
+  childSettingsOverlayPath: string;
+
+  /**
    * The one task group this instance works on. `null` means every group.
    *
    * This is what lets several orchestrators share a machine and a task source
@@ -258,6 +265,10 @@ export function loadOrchestratorConfig(): OrchestratorConfig {
     handedRebaseIntervalSeconds: parsePositiveInt("ORCHESTRATOR_HANDED_REBASE_INTERVAL_SECONDS", 43_200),
 
     claudeExecutable: process.env.ORCHESTRATOR_CLAUDE_BIN || "claude",
+    childSettingsOverlayPath: expandHome(
+      process.env.ORCHESTRATOR_CHILD_SETTINGS_PATH ||
+        join(homedir(), ".config/ai-orchestrator/child-settings.json"),
+    ),
 
     group: parseGroup(),
     claudeConfigDir: claudeConfigDir(),

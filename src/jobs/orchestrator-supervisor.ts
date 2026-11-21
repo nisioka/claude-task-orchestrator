@@ -24,6 +24,7 @@ import {
   type HeartbeatRecord,
 } from "../lib/agent-runtime.js";
 import { readContextSample } from "../lib/session-context.js";
+import { writeChildSettings } from "../lib/child-settings.js";
 import { renderPrompts } from "../lib/prompt-render.js";
 import { loadWorkflow, offTheQueueStatuses, promptNames } from "../lib/tasks/workflow.js";
 import { createTaskProvider } from "../lib/tasks/factory.js";
@@ -581,6 +582,11 @@ export async function runOrchestratorSupervisor(
 
   // Render before the check below: the instruction file the session reads is an
   // output of this step, not something kept in the repository.
+  const settings = await writeChildSettings({
+    stateDir: config.stateDir,
+    repoDir: config.repoDir,
+    overlayPath: config.childSettingsOverlayPath,
+  });
   await renderPrompts(
     config.promptSourceDirs,
     config.renderedPromptDir,
@@ -591,7 +597,8 @@ export async function runOrchestratorSupervisor(
       repositoriesPath: appConfig.repositoriesPath ?? DEFAULT_REPOSITORIES_PATH,
       claudeBin: config.claudeExecutable,
       claudeConfigDir: config.claudeConfigDir,
-      childSettingsFlag: await childSettingsFlag(config.repoDir),
+      childSettingsFlag: settingsFlag(settings.impl),
+      judgeSettingsFlag: settingsFlag(settings.judge),
     },
   );
 
@@ -658,7 +665,7 @@ export async function runOrchestratorSupervisor(
     }
     // Starting on work is routine here, so it passes in silence unless the
     // residency prerequisites are unmet.
-    await launch(config, io, notify, "仕事が来たため起動", false);
+    await launch(config, io, notify, "仕事が来たため起動", false, settings.orchestrator);
     return;
   }
 
@@ -716,15 +723,13 @@ export async function runOrchestratorSupervisor(
     reason = "再起動";
   }
 
-  await launch(config, io, notify, reason, announceStart);
+  await launch(config, io, notify, reason, announceStart, settings.orchestrator);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
-/** `--settings` for the orchestrator's local settings, when it has any. */
-async function childSettingsFlag(repoDir: string): Promise<string> {
-  const path = join(repoDir, ".claude", "settings.local.json");
-  return (await fileExists(path)) ? `--settings ${shellQuote(path)}` : "";
+function settingsFlag(path: string): string {
+  return `--settings ${shellQuote(path)}`;
 }
 
 /** Single-quoted for a POSIX shell, so `$` and quotes in the path reach the child as written. */
@@ -742,6 +747,7 @@ async function launch(
   notify: (payload: DiscordPayload) => Promise<void>,
   reason: StartReason,
   announceStart: boolean,
+  settingsPath: string,
 ): Promise<void> {
   const prerequisites = await io.checkPrerequisites();
 
@@ -762,6 +768,9 @@ async function launch(
         name: ORCHESTRATOR_SESSION_NAME,
         // Lets the session raise a question with the human on its own.
         brief: true,
+        // Leaves out the repository's CLAUDE.md, the design document of this
+        // system: the session's rules are in its instruction file.
+        settings: settingsPath,
       },
       { executable: config.claudeExecutable },
     );

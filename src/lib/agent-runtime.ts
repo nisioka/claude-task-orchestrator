@@ -67,6 +67,8 @@ export interface LaunchOptions {
   /** Enables SendUserMessage so the agent can reach the human first. */
   brief?: boolean;
   permissionMode?: string;
+  /** Path of a `--settings` file, layered over the user's and the project's own. */
+  settings?: string;
 }
 
 export interface HeartbeatRecord {
@@ -160,6 +162,7 @@ export function buildLaunchArgs(options: LaunchOptions): string[] {
   if (options.effort) args.push("--effort", options.effort);
   if (options.permissionMode) args.push("--permission-mode", options.permissionMode);
   if (options.brief) args.push("--brief");
+  if (options.settings) args.push("--settings", options.settings);
   args.push(options.prompt);
 
   return args;

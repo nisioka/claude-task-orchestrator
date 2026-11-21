@@ -171,6 +171,7 @@ npx tsx src/cli/send-reminder.ts "メッセージ"
 | `.env` | APIキーと通知先（[.env.example](.env.example)） |
 | `~/.config/ai-orchestrator/repositories.json` | 対象リポジトリ（[docs/repositories.md](docs/repositories.md)） |
 | `~/.config/ai-orchestrator/workflow.json` | ステータス名（[docs/workflow.md](docs/workflow.md)。無ければ既定） |
+| `~/.config/ai-orchestrator/child-settings.json` | 子の `--settings` に足す設定。子が使わないプラグインを `enabledPlugins` で `false` にする。無ければ足さない |
 
 - [docs/task-source.md](docs/task-source.md) — Linear / ClickUp の切り替えと、それぞれの癖
 - [docs/orchestrator-crontab.md](docs/orchestrator-crontab.md) — cron への登録と、指示ファイルの反映

@@ -83,6 +83,11 @@ export interface InstancePlaceholders {
    * force push falls to the auto mode classifier.
    */
   childSettingsFlag?: string;
+  /**
+   * `{{judgeSettingsFlag}}`: the same for a judgement child, which also leaves
+   * out the repository's `CLAUDE.md` (see `child-settings.ts`).
+   */
+  judgeSettingsFlag?: string;
 }
 
 const DEFAULT_INSTANCE: Required<InstancePlaceholders> = {
@@ -90,6 +95,7 @@ const DEFAULT_INSTANCE: Required<InstancePlaceholders> = {
   claudeBin: "claude",
   claudeConfigDir: "$HOME/.claude",
   childSettingsFlag: "",
+  judgeSettingsFlag: "",
 };
 
 /**
@@ -151,6 +157,7 @@ export function substitutePaths(text: string, context: RenderContext): string {
     .replaceAll("{{claudeBin}}", instance.claudeBin)
     .replaceAll("{{claudeConfigDir}}", instance.claudeConfigDir)
     .replaceAll("{{childSettingsFlag}}", instance.childSettingsFlag)
+    .replaceAll("{{judgeSettingsFlag}}", instance.judgeSettingsFlag)
     .replaceAll("{{coreDir}}", coreDir)
     .replaceAll("{{repoDir}}", context.repoDir ?? coreDir)
     .replaceAll("{{promptDir}}", context.promptDir)
