@@ -3,5 +3,7 @@
   { "file": "child/infra-common.md", "purpose": "インフラ（Terraform）リポジトリの実装。`impl-from-triage.md` と**併せて**参照させる" },
   { "file": "child/rebase-common-infra.md", "purpose": "rebase" },
   { "file": "child/handed-pr-rebase.md", "purpose": "人間の手番の PR の rebase。担当者とステータスを動かさない" },
-  { "file": "child/judge-common.md", "purpose": "判断委譲の子（`ai-judge-`）。判断・トリアージ・調査のどれでも参照させる" }
+  { "file": "child/judge-common.md", "purpose": "判断委譲の子（`ai-judge-`）。判断・トリアージ・調査のどれでも参照させる" },
+  { "file": "child/worklog.md", "purpose": "捨てた方法をその場で書く作業ログ。worktree で動くどの子にも**併せて**参照させる" },
+  { "file": "child/mechanical.md", "purpose": "機械的な作業として軽いモデルで起動した子。予測と違えば解かずに止まる。ほかの指示と**併せて**参照させる" }
 ]

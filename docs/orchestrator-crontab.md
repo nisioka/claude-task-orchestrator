@@ -203,6 +203,22 @@ mkdir -p ~/.local/state/ai-orchestrator-b
 ゲートを回すたびに印は更新されるので、最終確認が確認間隔上限の2倍より古ければ
 「確認が止まっています」と警告する。cron が止まっていると、仕事が来ても誰も起こさないため。
 
+## 子エージェントのモデル
+
+子の起動コマンドのモデルとeffortは、supervisor が設定から描画する（`{{implementModelFlags}}` など）。
+指示ファイルにモデル名を直に書くと、設定を変えてもセッションが写すコマンドは変わらない。
+
+| 子 | モデル | effort |
+|---|---|---|
+| 実装 | `ORCHESTRATOR_IMPL_MODEL`（既定 `opus`） | `ORCHESTRATOR_IMPL_EFFORT`（既定 `xhigh`） |
+| 判断委譲 | `ORCHESTRATOR_JUDGE_MODEL`（既定 `opus`） | `ORCHESTRATOR_JUDGE_EFFORT`（既定はデーモンに任せる） |
+| 機械的な作業 | `ORCHESTRATOR_MECHANICAL_MODEL`（既定 `sonnet`） | `ORCHESTRATOR_MECHANICAL_EFFORT`（既定 `high`） |
+
+機械的な作業は、rebase の予測（`rebase-triage.ts --predict=<基底>`）で「手で解決」が0件のもの。
+rebase の費用のほとんどは生成物と採番の読み取りで、判断ではなかった。予測は2つの先端を1回マージした
+見込みなので、実際の rebase で予測に無い「手で解決」が出たら、軽いモデルの子は解かずに止まり、
+オーケストレータが実装のモデルで立て直す（`prompts/child/mechanical.md`）。
+
 ## 検証用コンテナの回収 (container-sweep)
 
 常駐セッションではなく cron が持つ。**理由は、判定に必要な事実がセッションより長生きするからではなく、

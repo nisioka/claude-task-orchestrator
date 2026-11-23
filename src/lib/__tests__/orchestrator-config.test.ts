@@ -118,6 +118,30 @@ describe("loadOrchestratorConfig defaults", () => {
     expect(config.implementEffort).toBe("xhigh");
   });
 
+  it("uses sonnet at high effort for mechanical work", () => {
+    const config = loadOrchestratorConfig();
+
+    expect(config.mechanicalModel).toBe("sonnet");
+    expect(config.mechanicalEffort).toBe("high");
+  });
+
+  it("reads the mechanical model and effort from their own settings", () => {
+    vi.stubEnv("ORCHESTRATOR_MECHANICAL_MODEL", "haiku");
+    vi.stubEnv("ORCHESTRATOR_MECHANICAL_EFFORT", "medium");
+
+    const config = loadOrchestratorConfig();
+
+    expect(config.mechanicalModel).toBe("haiku");
+    expect(config.mechanicalEffort).toBe("medium");
+    expect(config.implementModel).toBe("opus");
+  });
+
+  it("rejects an unknown mechanical effort", () => {
+    vi.stubEnv("ORCHESTRATOR_MECHANICAL_EFFORT", "extreme");
+
+    expect(() => loadOrchestratorConfig()).toThrow("ORCHESTRATOR_MECHANICAL_EFFORT");
+  });
+
   it("leaves the judgement effort unset so the daemon default applies", () => {
     expect(loadOrchestratorConfig().judgementEffort).toBeNull();
   });
