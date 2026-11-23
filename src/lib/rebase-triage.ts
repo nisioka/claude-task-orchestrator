@@ -190,14 +190,17 @@ export function renderPlan(result: TriageResult, rules: RebaseRules): string[] {
 // ─── Prediction ─────────────────────────────────────────────────────
 
 /**
- * Conflicted paths from `git merge-tree --write-tree --name-only --no-messages`.
+ * Conflicted paths from `git merge-tree --write-tree --name-only --no-messages -z`.
  *
- * The first line is the resulting tree, written even when the merge conflicts;
- * every line after it is a conflicted path.
+ * The first field is the resulting tree, written even when the merge conflicts;
+ * every field after it is a conflicted path. NUL-separated because without `-z`
+ * git quotes and octal-escapes any path outside plain ASCII, and a quoted path
+ * matches none of the classification globs. Paths are kept byte for byte: a
+ * leading or trailing space is part of the name.
  */
 export function parseMergeTreeConflicts(stdout: string): string[] {
-  const [, ...paths] = stdout.split("\n");
-  return [...new Set(paths.map((line) => line.trim()).filter(Boolean))].sort();
+  const [, ...paths] = stdout.split("\0");
+  return [...new Set(paths.filter((path) => path.length > 0))].sort();
 }
 
 /**

@@ -51,7 +51,11 @@ export function parseArgs(argv: string[]): Options {
     if (arg.startsWith("--worktree=")) options.worktree = arg.slice("--worktree=".length);
     else if (arg.startsWith("--label=")) options.label = arg.slice("--label=".length);
     else if (arg.startsWith("--config=")) options.configPath = arg.slice("--config=".length);
-    else if (arg.startsWith("--predict=")) options.predict = arg.slice("--predict=".length);
+    else if (arg === "--predict" || arg.startsWith("--predict=")) {
+      const base = arg.slice("--predict=".length);
+      if (!base) throw new Error("--predict には基底の ref を渡してください（例: --predict=origin/main）");
+      options.predict = base;
+    }
     else if (!arg.startsWith("--")) options.worktree = arg;
   }
 
@@ -84,16 +88,24 @@ async function resolveRules(options: Options): Promise<{ rules: RebaseRules; sou
  * Paths a merge of `base` into HEAD would conflict on, without touching the
  * worktree. `git merge-tree` exits 1 on conflicts, which is an answer here,
  * not a failure.
+ *
+ * Exit 1 with no path listed is refused rather than read as clean: git says
+ * the merge conflicts but names nothing to classify, and calling that clean
+ * would start the light model on a rebase nobody has looked at.
  */
 async function predictConflictPaths(worktree: string, base: string): Promise<string[]> {
-  const args = ["-C", worktree, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, "HEAD"];
+  const args = ["-C", worktree, "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", base, "HEAD"];
   try {
     const { stdout } = await execFileAsync("git", args, { maxBuffer: 10 * 1024 * 1024 });
     return parseMergeTreeConflicts(stdout);
   } catch (error) {
     const failed = error as { code?: number; stdout?: string };
     if (failed.code === 1 && typeof failed.stdout === "string") {
-      return parseMergeTreeConflicts(failed.stdout);
+      const paths = parseMergeTreeConflicts(failed.stdout);
+      if (paths.length > 0) return paths;
+      throw new Error(
+        "git merge-tree はコンフリクトありと答えましたが、ファイルを1つも挙げませんでした。予測できないので、実装のモデルで起動してください",
+      );
     }
     throw error;
   }

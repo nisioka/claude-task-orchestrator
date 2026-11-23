@@ -161,15 +161,22 @@ describe("renderPlan", () => {
 // ─── Prediction ─────────────────────────────────────────────────────
 
 describe("parseMergeTreeConflicts", () => {
-  it("drops the tree id on the first line and keeps the conflicted paths", () => {
-    expect(parseMergeTreeConflicts("da0ff9093e3df116522c501bd1d157b51e0cfca9\nb.kt\na.kt\n")).toEqual([
+  it("drops the tree id in the first field and keeps the conflicted paths", () => {
+    expect(parseMergeTreeConflicts("da0ff9093e3df116522c501bd1d157b51e0cfca9\0b.kt\0a.kt\0")).toEqual([
       "a.kt",
       "b.kt",
     ]);
   });
 
+  it("keeps non-ASCII names and surrounding spaces as they are", () => {
+    expect(parseMergeTreeConflicts("da0ff9093e3df116522c501bd1d157b51e0cfca9\0ファイル 1\0 lead.kt\0")).toEqual([
+      " lead.kt",
+      "ファイル 1",
+    ]);
+  });
+
   it("reads a clean merge as no conflicts", () => {
-    expect(parseMergeTreeConflicts("dd66ef9fdea08def26319a06300390c9506c0bce\n")).toEqual([]);
+    expect(parseMergeTreeConflicts("dd66ef9fdea08def26319a06300390c9506c0bce\0")).toEqual([]);
   });
 });
 
