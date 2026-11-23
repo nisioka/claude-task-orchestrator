@@ -44,7 +44,7 @@ mkdir -p ~/.config/ai-orchestrator
 | `setupCommand` | worktree 作成を含む環境構築コマンド（`app-fe-gw <branch>` 等） |
 | `branchPrefix` | ブランチ名の接頭辞 |
 | `localPatch` | ローカル専用パッチの所在。適用ファイルは worktree 構築直後にステージング不能にされる |
-| `model` | このリポジトリでの実装モデル指定 |
+| `model` | このリポジトリでの実装モデル指定。実装の子の `--model` をこれに替える。機械的な作業の子（`ORCHESTRATOR_MECHANICAL_MODEL`）には当てない |
 | `group` | このリポジトリが属するタスクのグループ（`work` / `private`）。オーケストレータをグループごとに分けるときに使う（[multiple-accounts.md](multiple-accounts.md)） |
 | `rebase` | rebase 時に「読まずにコマンドで解決する」パスとコマンド（下記） |
 

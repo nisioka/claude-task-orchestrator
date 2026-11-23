@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   CORE_DIR,
+  modelFlags,
   relativeCliInvocations,
   renderChildRules,
   renderPromptText,
@@ -73,6 +74,30 @@ describe("renderPromptText", () => {
       }),
     ).toBe("claude --bg --settings '/state/child-settings/judge.json' --name x \"go\"");
     expect(renderPromptText(text, { names: {}, promptDir: "/out" })).toBe('claude --bg  --name x "go"');
+  });
+
+  it("renders each kind of child's model flags, defaulting to the models the prompt used to spell out", () => {
+    const text = "{{implementModelFlags}} | {{judgementModelFlags}} | {{mechanicalModelFlags}}";
+
+    expect(renderPromptText(text, { names: {}, promptDir: "/out" })).toBe(
+      "--model opus --effort xhigh | --model opus | --model sonnet --effort high",
+    );
+    expect(
+      renderPromptText(text, {
+        names: {},
+        promptDir: "/out",
+        instance: {
+          implementModelFlags: "--model fable --effort max",
+          judgementModelFlags: "--model opus --effort high",
+          mechanicalModelFlags: "--model haiku",
+        },
+      }),
+    ).toBe("--model fable --effort max | --model opus --effort high | --model haiku");
+  });
+
+  it("leaves --effort out of the model flags when no effort is set", () => {
+    expect(modelFlags("opus", null)).toBe("--model opus");
+    expect(modelFlags("sonnet", "high")).toBe("--model sonnet --effort high");
   });
 
   it("points repoDir at the core when nothing embeds it", () => {

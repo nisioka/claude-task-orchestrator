@@ -88,6 +88,23 @@ export interface InstancePlaceholders {
    * out the repository's `CLAUDE.md` (see `child-settings.ts`).
    */
   judgeSettingsFlag?: string;
+  /**
+   * `{{implementModelFlags}}`, `{{judgementModelFlags}}`, `{{mechanicalModelFlags}}`:
+   * the `--model` / `--effort` arguments each kind of child is started with.
+   *
+   * The launch commands in the prompt used to spell `--model opus --effort xhigh`
+   * literally, while the bootstrap prompt told the session the configured model.
+   * Two sources for one answer drift apart silently: changing the setting
+   * changed a sentence the session read, not the command it copied.
+   */
+  implementModelFlags?: string;
+  judgementModelFlags?: string;
+  mechanicalModelFlags?: string;
+}
+
+/** `--model <m>` plus `--effort <e>` when an effort is set. */
+export function modelFlags(model: string, effort: string | null): string {
+  return effort ? `--model ${model} --effort ${effort}` : `--model ${model}`;
 }
 
 const DEFAULT_INSTANCE: Required<InstancePlaceholders> = {
@@ -96,6 +113,9 @@ const DEFAULT_INSTANCE: Required<InstancePlaceholders> = {
   claudeConfigDir: "$HOME/.claude",
   childSettingsFlag: "",
   judgeSettingsFlag: "",
+  implementModelFlags: "--model opus --effort xhigh",
+  judgementModelFlags: "--model opus",
+  mechanicalModelFlags: "--model sonnet --effort high",
 };
 
 /**
@@ -158,6 +178,9 @@ export function substitutePaths(text: string, context: RenderContext): string {
     .replaceAll("{{claudeConfigDir}}", instance.claudeConfigDir)
     .replaceAll("{{childSettingsFlag}}", instance.childSettingsFlag)
     .replaceAll("{{judgeSettingsFlag}}", instance.judgeSettingsFlag)
+    .replaceAll("{{implementModelFlags}}", instance.implementModelFlags)
+    .replaceAll("{{judgementModelFlags}}", instance.judgementModelFlags)
+    .replaceAll("{{mechanicalModelFlags}}", instance.mechanicalModelFlags)
     .replaceAll("{{coreDir}}", coreDir)
     .replaceAll("{{repoDir}}", context.repoDir ?? coreDir)
     .replaceAll("{{promptDir}}", context.promptDir)

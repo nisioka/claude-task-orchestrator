@@ -25,7 +25,7 @@ import {
 } from "../lib/agent-runtime.js";
 import { readContextSample } from "../lib/session-context.js";
 import { writeChildSettings } from "../lib/child-settings.js";
-import { renderPrompts } from "../lib/prompt-render.js";
+import { modelFlags, renderPrompts } from "../lib/prompt-render.js";
 import { loadWorkflow, offTheQueueStatuses, promptNames } from "../lib/tasks/workflow.js";
 import { createTaskProvider } from "../lib/tasks/factory.js";
 import { DEFAULT_REPOSITORIES_PATH } from "../lib/repositories.js";
@@ -287,6 +287,7 @@ export function buildBootstrapPrompt(config: OrchestratorConfig): string {
     `ハートビート追記先: ${config.heartbeatPath}。`,
     `実装エージェントのモデル: ${config.implementModel}（effort ${config.implementEffort}）。`,
     `判断エージェントのモデル: ${config.judgementModel}。`,
+    `機械的な作業の子のモデル: ${config.mechanicalModel}（effort ${config.mechanicalEffort}）。`,
   ].join("");
 }
 
@@ -599,6 +600,9 @@ export async function runOrchestratorSupervisor(
       claudeConfigDir: config.claudeConfigDir,
       childSettingsFlag: settingsFlag(settings.impl),
       judgeSettingsFlag: settingsFlag(settings.judge),
+      implementModelFlags: modelFlags(config.implementModel, config.implementEffort),
+      judgementModelFlags: modelFlags(config.judgementModel, config.judgementEffort),
+      mechanicalModelFlags: modelFlags(config.mechanicalModel, config.mechanicalEffort),
     },
   );
 

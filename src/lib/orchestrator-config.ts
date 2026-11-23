@@ -61,6 +61,16 @@ export interface OrchestratorConfig {
   judgementModel: string;
   /** `null` means "leave it to the daemon default". */
   judgementEffort: EffortLevel | null;
+  /**
+   * The model for children whose work needs no judgement: a rebase whose
+   * triage left nothing to resolve by hand, or merging a base branch in.
+   *
+   * Their cost was in reading generated files and renumbering, not in deciding
+   * anything, so the deepest model buys nothing there. Kept separate from the
+   * implementation model so that lowering one never lowers the other.
+   */
+  mechanicalModel: string;
+  mechanicalEffort: EffortLevel;
 
   minIntervalSeconds: number;
   targetIntervalSeconds: number;
@@ -240,6 +250,8 @@ export function loadOrchestratorConfig(): OrchestratorConfig {
     implementEffort: parseEffort("ORCHESTRATOR_IMPL_EFFORT", "xhigh"),
     judgementModel: process.env.ORCHESTRATOR_JUDGE_MODEL || "opus",
     judgementEffort: parseEffort("ORCHESTRATOR_JUDGE_EFFORT", null),
+    mechanicalModel: process.env.ORCHESTRATOR_MECHANICAL_MODEL || "sonnet",
+    mechanicalEffort: parseEffort("ORCHESTRATOR_MECHANICAL_EFFORT", "high"),
 
     minIntervalSeconds: parsePositiveInt("ORCHESTRATOR_MIN_INTERVAL_SECONDS", 600),
     targetIntervalSeconds: parsePositiveInt("ORCHESTRATOR_TARGET_INTERVAL_SECONDS", 1200),

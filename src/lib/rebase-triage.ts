@@ -187,6 +187,52 @@ export function renderPlan(result: TriageResult, rules: RebaseRules): string[] {
   return lines;
 }
 
+// ─── Prediction ─────────────────────────────────────────────────────
+
+/**
+ * Conflicted paths from `git merge-tree --write-tree --name-only --no-messages -z`.
+ *
+ * The first field is the resulting tree, written even when the merge conflicts;
+ * every field after it is a conflicted path. NUL-separated because without `-z`
+ * git quotes and octal-escapes any path outside plain ASCII, and a quoted path
+ * matches none of the classification globs. Paths are kept byte for byte: a
+ * leading or trailing space is part of the name.
+ */
+export function parseMergeTreeConflicts(stdout: string): string[] {
+  const [, ...paths] = stdout.split("\0");
+  return [...new Set(paths.filter((path) => path.length > 0))].sort();
+}
+
+/**
+ * What a rebase is likely to need, read before anyone starts it.
+ *
+ * Triage proper reads the unmerged paths of a rebase in progress, so it cannot
+ * tell the orchestrator which model to start a rebase child with: by the time
+ * there is something to read, the child is already running. A three-way merge
+ * of the two tips is the cheap stand-in. It is an estimate — a rebase replays
+ * commits one at a time and can conflict on a path the final merge does not —
+ * which is why the child still triages the real rebase and stops when the two
+ * disagree.
+ */
+export function renderPrediction(result: TriageResult, rules: RebaseRules): string[] {
+  const lines = [
+    `判定: ${result.verdict}`,
+    `  生成物 ${result.regenerate.length}件 / 採番 ${result.renumber.length}件 / 手で解決 ${result.hand.length}件（上限 ${rules.handLimit} 件）`,
+  ];
+  for (const path of result.hand) lines.push(`    ${path}`);
+
+  if (result.verdict === "clean") {
+    lines.push("コンフリクトの見込みはありません。");
+  } else if (result.verdict === "mechanical") {
+    lines.push("判断の要る差分はない見込みです。機械的な作業の子として起動できます。");
+  } else if (result.verdict === "mixed") {
+    lines.push("手で解決する差分があります。実装の子として起動してください。");
+  } else {
+    lines.push("手で解決するファイルが上限を超えています。着手せず人間へ渡してください。");
+  }
+  return lines;
+}
+
 // ─── Glob matching ──────────────────────────────────────────────────
 
 /**

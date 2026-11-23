@@ -4,8 +4,10 @@ import {
   classifyConflicts,
   defaultRebaseRules,
   matchesGlob,
+  parseMergeTreeConflicts,
   rebaseRulesFor,
   renderPlan,
+  renderPrediction,
   type RebaseRules,
 } from "../rebase-triage.js";
 
@@ -153,5 +155,49 @@ describe("renderPlan", () => {
     expect(renderPlan(classifyConflicts([], BE_RULES), BE_RULES).join("\n")).toContain(
       "コンフリクトはありません",
     );
+  });
+});
+
+// ─── Prediction ─────────────────────────────────────────────────────
+
+describe("parseMergeTreeConflicts", () => {
+  it("drops the tree id in the first field and keeps the conflicted paths", () => {
+    expect(parseMergeTreeConflicts("da0ff9093e3df116522c501bd1d157b51e0cfca9\0b.kt\0a.kt\0")).toEqual([
+      "a.kt",
+      "b.kt",
+    ]);
+  });
+
+  it("keeps non-ASCII names and surrounding spaces as they are", () => {
+    expect(parseMergeTreeConflicts("da0ff9093e3df116522c501bd1d157b51e0cfca9\0ファイル 1\0 lead.kt\0")).toEqual([
+      " lead.kt",
+      "ファイル 1",
+    ]);
+  });
+
+  it("reads a clean merge as no conflicts", () => {
+    expect(parseMergeTreeConflicts("dd66ef9fdea08def26319a06300390c9506c0bce\0")).toEqual([]);
+  });
+});
+
+describe("renderPrediction", () => {
+  it("says a rebase with only generated files and migrations is mechanical", () => {
+    const result = classifyConflicts(
+      ["src/main/kotlin/nu/studer/jooq/keys/Keys.kt", "src/main/resources/db/migration/V12__x.sql"],
+      BE_RULES,
+    );
+
+    const text = renderPrediction(result, BE_RULES).join("\n");
+    expect(text).toContain("判定: mechanical");
+    expect(text).toContain("機械的な作業の子");
+  });
+
+  it("names the files that need judgement and sends the rebase to an implementation child", () => {
+    const result = classifyConflicts(["src/main/kotlin/app/Service.kt"], BE_RULES);
+
+    const text = renderPrediction(result, BE_RULES).join("\n");
+    expect(text).toContain("判定: mixed");
+    expect(text).toContain("src/main/kotlin/app/Service.kt");
+    expect(text).toContain("実装の子");
   });
 });
