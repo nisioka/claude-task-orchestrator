@@ -13,7 +13,7 @@ npx tsx {{coreDir}}/src/cli/personal-issue-detail.ts <ISSUE-ID> --comments=40
 
 **コメントに「走っている他案件との衝突」の記述があれば、必ずそれに従ってください。** いま同じメール配信領域で複数の実装が並走しています。
 
-**着手する前に、このイシューの既存の PR を探してください。** 指示された作業が既にマージ済みのことがあります。`gh pr list --state all --search "<課題識別子>"` で PR を全部見て、`git fetch` の後に `git merge-base --is-ancestor <ブランチ> origin/<基底ブランチ>` で確かめてください。重複した PR は作らず、残っている差分だけを実装し、既に入っていたものを報告に書いてください。
+**着手する前に、このイシューの既存の PR を探してください。** 指示された作業が既にマージ済みのことがあります。`gh pr list --state all --search "<課題識別子>"` と、`gh pr list --state all --json number,title,headRefName` のブランチ名に小文字の課題識別子を含むものを全部見て、`git fetch` の後に `git merge-base --is-ancestor <ブランチ> origin/<基底ブランチ>` で確かめてください。重複した PR は作らず、残っている差分だけを実装し、既に入っていたものを報告に書いてください。
 
 ## 作業環境
 
