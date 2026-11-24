@@ -41,11 +41,11 @@ git status -sb
 ## 落とし穴（既知。ここで時間を溶かさないでください）
 
 **BE**
-- **マイグレーションの採番は `develop` 基準。** make の reorder は staging 基準でズレる。旧名が `build/` に残ると全滅する
+- **マイグレーションの採番は `make db/flyway/reorder` で `develop` 基準に振る。** `db/flyway/reorder/develop` は名前と逆に staging 基準でズレる。旧名が `build/` に残ると全滅する
 - **jOOQ などの生成物を読んで手で直さない。再生成する**
 - **`make generate` / `make jooq` は生成物を先に消す。** 途中で落ちると `src/main/kotlin/nu` が消えたままになる。主因はポート衝突
 - **テストをローカルで全部通そうとしない**（10時間規模）。`make app/build` まで通してテストはCIに委ねる
-- **ktlint は `make app/ktlint` を信じない**（`CD=true` で root 検査が SKIPPED）。**CLI を変更ファイルに直接掛ける**
+- **ktlint は `make app/ktlint` で掛ける。** 変更したファイルだけに CI と同じ版の CLI を当てる。ホストの Python 3 と JDK で動く
 - **PR には Performance Impact と ANALYZE の記載が要る。** 実装が正しくても書式で赤くなる。**合成データの計測値を根拠に書かない**（未実測なら未実測と書く）
 - **compose を make 経由で叩かないと自分のスタックが壊れる**（ポート分離は Makefile の変数計算のため）
 
@@ -110,6 +110,8 @@ force push をかなりの確率で拒否します（同じ形が通ったり拒
 **「CIを通すために検査の側を緩める」は、常に安全ではありません。** それが唯一の道に見えたら止まって報告してください。
 
 ## 終わったら
+
+PRを作る前と人間へ返す前に、`personal-issue-detail.ts <ISSUE-ID> --comments=40` で最新のコメントを読み直してください。PRを出したら、CI を待たずにリンクと検証内容をイシューへコメントしてください。
 
 **やったこと / 検証で実際にやったこと（Storybook で見た、テストを書いた、など）/ 確かめられていないこと / PRのリンク / worktree の絶対パス** を報告してください。**「確かめられていないこと」を省かないでください。**
 
