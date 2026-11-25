@@ -164,6 +164,12 @@ npx tsx src/cli/personal-assignee.ts --id=<ISSUE-ID> --to=human
 npx tsx src/cli/send-reminder.ts "メッセージ"
 ```
 
+子が push の後の CI を待つ CLI も同じ場所にあります。終わるまで何も出さず、終わったときに要約を1回だけ出します。待ち方は [prompts/child/ci-wait.md](prompts/child/ci-wait.md)。
+
+```bash
+npx tsx src/cli/ci-wait.ts --repo=<owner/name> --pr=<番号>
+```
+
 ## 設定
 
 | ファイル | 中身 |
