@@ -59,6 +59,10 @@ export function parseArgs(argv: string[]): Options {
     else throw new Error(`知らない引数です: ${arg}`);
   }
   if (options.pr !== null && options.branch !== null) throw new Error("--pr と --branch はどちらか1つだけ渡してください");
+  // The pull request of the current branch is looked up in the current directory's repository, not in --repo.
+  if (options.repo !== null && options.pr === null && options.branch === null) {
+    throw new Error("--repo を渡すときは --pr か --branch も渡してください");
+  }
   if (options.repo !== null && !/^[\w.-]+\/[\w.-]+$/.test(options.repo)) {
     throw new Error(`--repo は owner/name の形で渡してください: ${options.repo}`);
   }

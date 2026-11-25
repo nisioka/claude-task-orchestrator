@@ -6,6 +6,7 @@ import {
   initialState,
   isSettled,
   parseAppChecks,
+  readSnapshot,
   renderSummary,
   step,
   tailFailedLog,
@@ -206,7 +207,7 @@ describe("renderSummary", () => {
         failedJobs: [{ name: "CI / test", conclusion: "failure", annotations: ["failure src/a.ts:3 expected 1"], logTail: ["boom"] }],
         omittedJobs: [],
         cancelledJobs: [],
-        readRuns: ["CI"],
+        readRuns: [1],
       },
     });
     expect(text.split("\n").slice(0, 7)).toEqual([
@@ -219,6 +220,24 @@ describe("renderSummary", () => {
       "待った時間: 42 分",
     ]);
     expect(text).toContain("--- CI / test: failure\nannotations:\n  failure src/a.ts:3 expected 1\n失敗したステップのログの末尾 1 行:\nboom");
+  });
+
+  it("keeps a failed check from another app that shares a name with a failed run", () => {
+    const snapshot = snap({
+      runs: [run({ id: 1, conclusion: "failure" })],
+      appChecks: [{ app: "ci-app", name: "CI", status: "completed", conclusion: "failure", title: null }],
+    });
+    const text = renderSummary({
+      target: "acme/app#12",
+      outcome: "failure",
+      state: { ...initialState(0), head: snapshot.head },
+      snapshot,
+      now: 0,
+      reviewBots: DEFAULT_REVIEW_BOTS,
+      noRunsMinutes: 10,
+      jobs: { failedJobs: [{ name: "CI / test", conclusion: "failure", annotations: [], logTail: [] }], omittedJobs: [], cancelledJobs: [], readRuns: [1] },
+    });
+    expect(text).toContain("失敗: CI / test: failure, CI: failure");
   });
 
   it("lists what is still running on a timeout", () => {
@@ -274,21 +293,71 @@ describe("log helpers", () => {
   });
 });
 
+describe("readSnapshot", () => {
+  const pr = (state: string, mergeable: string, head: string) => JSON.stringify({ state, mergeable, headRefOid: head });
+
+  it("stops reading once the pull request is closed or conflicting", async () => {
+    for (const [state, mergeable] of [["CLOSED", "UNKNOWN"], ["OPEN", "CONFLICTING"]]) {
+      const calls: string[] = [];
+      const gh: GhRunner = async (args) => {
+        calls.push(args.join(" "));
+        if (args[0] === "pr") return pr(state, mergeable, "aaaaaaa1111");
+        throw new Error("GitHub is down");
+      };
+      const snapshot = await readSnapshot(gh, { repo: "acme/app", pr: 12 }, null);
+      expect(snapshot).toMatchObject({ head: "aaaaaaa1111", pullRequest: { state, mergeable }, runs: [] });
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  it("drops what it read when the head moved during the read", async () => {
+    let views = 0;
+    const gh: GhRunner = async (args) => {
+      const key = args.join(" ");
+      if (args[0] === "pr") return pr("OPEN", "MERGEABLE", ++views === 1 ? "aaaaaaa1111" : "bbbbbbb2222");
+      if (key.includes("/actions/runs?")) return JSON.stringify([{ workflow_runs: [{ id: 1, name: "CI", status: "completed", conclusion: "success" }] }]);
+      if (key.includes("/check-runs?")) return JSON.stringify([{ check_runs: [] }]);
+      if (key.includes("/status?")) return JSON.stringify([{ statuses: [] }]);
+      if (key.includes("/commits/bbbbbbb2222")) return JSON.stringify({ author: { login: "some-bot[bot]" } });
+      throw new Error(`unexpected gh call: ${key}`);
+    };
+    const snapshot = await readSnapshot(gh, { repo: "acme/app", pr: 12 }, "aaaaaaa1111");
+    expect(snapshot).toMatchObject({ head: "bbbbbbb2222", headAuthor: "some-bot[bot]", runs: [], appChecks: [], statuses: [] });
+  });
+
+  it("reads every page of the runs, the checks and the statuses", async () => {
+    const gh: GhRunner = async (args) => {
+      const key = args.join(" ");
+      if (args[0] === "pr") return pr("OPEN", "MERGEABLE", "aaaaaaa1111");
+      expect(args.slice(0, 3)).toEqual(["api", "--paginate", "--slurp"]);
+      if (key.includes("/actions/runs?")) return JSON.stringify([{ workflow_runs: [{ id: 1 }] }, { workflow_runs: [{ id: 2 }] }]);
+      if (key.includes("/check-runs?")) return JSON.stringify([{ check_runs: [] }, { check_runs: [{ app: { slug: "ci-app" }, name: "Build" }] }]);
+      if (key.includes("/status?")) return JSON.stringify([{ statuses: [] }, { statuses: [{ context: "deploy", state: "pending" }] }]);
+      throw new Error(`unexpected gh call: ${key}`);
+    };
+    const snapshot = await readSnapshot(gh, { repo: "acme/app", pr: 12 }, null);
+    expect(snapshot.runs.map((r) => r.id)).toEqual([1, 2]);
+    expect(snapshot.appChecks.map((c) => c.name)).toEqual(["Build"]);
+    expect(snapshot.statuses.map((s) => s.context)).toEqual(["deploy"]);
+  });
+});
+
 describe("waitForCi", () => {
-  /** A fake gh that answers from a script of reads, one per poll. */
+  /** A fake gh that answers from a script of reads, one per poll. Each poll reads the pull request twice. */
   function fakeGh(reads: { head: string; runs: unknown[] }[], extra: Record<string, string> = {}) {
     const calls: string[] = [];
-    let poll = -1;
+    let prViews = 0;
+    const current = () => reads[Math.min(Math.floor((prViews - 1) / 2), reads.length - 1)];
     const gh: GhRunner = async (args) => {
       const key = args.join(" ");
       calls.push(key);
       if (args[0] === "pr" && args[1] === "view") {
-        poll = Math.min(poll + 1, reads.length - 1);
-        return JSON.stringify({ state: "OPEN", mergeable: "MERGEABLE", headRefOid: reads[poll].head });
+        prViews++;
+        return JSON.stringify({ state: "OPEN", mergeable: "MERGEABLE", headRefOid: current().head });
       }
-      if (key.includes("/actions/runs?head_sha=")) return JSON.stringify({ workflow_runs: reads[poll].runs });
-      if (key.includes("/check-runs?")) return JSON.stringify({ check_runs: [] });
-      if (key.endsWith("/status")) return JSON.stringify({ statuses: [] });
+      if (key.includes("/actions/runs?head_sha=")) return JSON.stringify([{ workflow_runs: current().runs }]);
+      if (key.includes("/check-runs?")) return JSON.stringify([{ check_runs: [] }]);
+      if (key.includes("/status?")) return JSON.stringify([{ statuses: [] }]);
       if (key.includes("/commits/")) return JSON.stringify({ author: { login: "some-bot[bot]" } });
       for (const [needle, answer] of Object.entries(extra)) if (key.includes(needle)) return answer;
       throw new Error(`unexpected gh call: ${key}`);
@@ -380,6 +449,10 @@ describe("ci-wait arguments", () => {
   it("refuses a pull request and a branch together, and unknown arguments", () => {
     expect(() => parseArgs(["--pr=1", "--branch=main"])).toThrow("どちらか1つ");
     expect(() => parseArgs(["--watch"])).toThrow("知らない引数");
-    expect(() => parseArgs(["--repo=app"])).toThrow("owner/name");
+    expect(() => parseArgs(["--repo=app", "--pr=1"])).toThrow("owner/name");
+  });
+
+  it("does not look up the current branch's pull request in another repository", () => {
+    expect(() => parseArgs(["--repo=acme/other"])).toThrow("--pr か --branch");
   });
 });

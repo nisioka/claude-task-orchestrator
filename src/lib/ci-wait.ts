@@ -155,26 +155,33 @@ export function fingerprint(snapshot: Snapshot, reviewBots: RegExp): string {
   return [snapshot.head, ...runs.sort(), ...checks.sort(), ...statuses.sort()].join("\n");
 }
 
+export interface TallyEntry {
+  name: string;
+  conclusion: string;
+  /** Set for a workflow run, so the summary can replace it with its jobs. Null for checks and statuses. */
+  runId: number | null;
+}
+
 export interface Tally {
-  /** Failed runs, checks and statuses, each with its conclusion. */
-  failed: { name: string; conclusion: string }[];
-  cancelled: string[];
+  failed: TallyEntry[];
+  cancelled: TallyEntry[];
   pending: string[];
 }
 
 /** Gating results by kind, at run level. Failed jobs inside a run are named by the summary. */
 export function tally(snapshot: Snapshot, reviewBots: RegExp): Tally {
   const out: Tally = { failed: [], cancelled: [], pending: [] };
-  const judge = (name: string, finished: boolean, conclusion: string | null) => {
+  const judge = (name: string, finished: boolean, conclusion: string | null, runId: number | null) => {
+    const entry = { name, conclusion: conclusion ?? "結論なし", runId };
     if (!finished) out.pending.push(name);
-    else if (CANCELLED.has(conclusion ?? "")) out.cancelled.push(name);
-    else if (!PASSING.has(conclusion ?? "")) out.failed.push({ name, conclusion: conclusion ?? "結論なし" });
+    else if (CANCELLED.has(conclusion ?? "")) out.cancelled.push(entry);
+    else if (!PASSING.has(conclusion ?? "")) out.failed.push(entry);
   };
-  for (const run of currentRuns(snapshot.runs)) judge(run.name, run.status === "completed", run.conclusion);
-  for (const check of gatingChecks(snapshot, reviewBots)) judge(check.name, check.status === "completed", check.conclusion);
+  for (const run of currentRuns(snapshot.runs)) judge(run.name, run.status === "completed", run.conclusion, run.id);
+  for (const check of gatingChecks(snapshot, reviewBots)) judge(check.name, check.status === "completed", check.conclusion, null);
   for (const status of gatingStatuses(snapshot, reviewBots)) {
     if (PENDING_STATUS.has(status.state)) out.pending.push(status.context);
-    else if (status.state !== "success") out.failed.push({ name: status.context, conclusion: status.state });
+    else if (status.state !== "success") out.failed.push({ name: status.context, conclusion: status.state, runId: null });
   }
   return out;
 }
@@ -239,8 +246,8 @@ export interface JobDetails {
   /** Failed jobs past the ones given in full, by name and conclusion only. */
   omittedJobs: string[];
   cancelledJobs: string[];
-  /** Runs whose jobs were read. Their run-level entry is replaced by the jobs. */
-  readRuns: string[];
+  /** Ids of the runs whose jobs were read. Their run-level entry is replaced by the jobs. */
+  readRuns: number[];
 }
 
 export const NO_JOB_DETAILS: JobDetails = { failedJobs: [], omittedJobs: [], cancelledJobs: [], readRuns: [] };
@@ -295,12 +302,13 @@ export function renderSummary(input: SummaryInput): string {
   } else {
     const t = tally(snapshot, input.reviewBots);
     const read = new Set(jobs.readRuns);
+    const unread = (e: TallyEntry) => e.runId === null || !read.has(e.runId);
     const failed = [
       ...jobs.failedJobs.map((j) => `${j.name}: ${j.conclusion}`),
       ...jobs.omittedJobs,
-      ...t.failed.filter((f) => !read.has(f.name)).map((f) => `${f.name}: ${f.conclusion}`),
+      ...t.failed.filter(unread).map((f) => `${f.name}: ${f.conclusion}`),
     ];
-    const cancelled = [...jobs.cancelledJobs, ...t.cancelled.filter((name) => !read.has(name))];
+    const cancelled = [...jobs.cancelledJobs, ...t.cancelled.filter(unread).map((c) => c.name)];
     lines.push(`失敗: ${listOrNone(failed)}`);
     lines.push(`取消: ${listOrNone(cancelled)}`);
     if (outcome === "timeout") lines.push(`終わっていない: ${listOrNone(t.pending)}`);
@@ -423,23 +431,57 @@ async function ghJson(gh: GhRunner, args: string[]): Promise<unknown> {
   return JSON.parse(await gh(args));
 }
 
+/** Every page of a list endpoint, merged under `key`. A verdict drawn from the first page alone could miss a pending entry. */
+async function ghAllPages(gh: GhRunner, path: string, key: string): Promise<Json> {
+  const pages = list(await ghJson(gh, ["api", "--paginate", "--slurp", path]));
+  return { [key]: pages.flatMap((page) => list(page[key])) };
+}
+
+async function readPullRequest(gh: GhRunner, target: { repo: string; pr: number }): Promise<{ head: string; state: PullRequestState }> {
+  const pr = obj(await ghJson(gh, ["pr", "view", String(target.pr), "--repo", target.repo, "--json", "state,mergeable,headRefOid"]));
+  const head = str(pr.headRefOid) ?? "";
+  if (!head) throw new Error(`${describeTarget(target)} の head を読めませんでした`);
+  return { head, state: { state: str(pr.state) ?? "", mergeable: str(pr.mergeable) ?? "UNKNOWN" } };
+}
+
+async function readAuthor(gh: GhRunner, repo: string, head: string, knownHead: string | null): Promise<string | null> {
+  if (knownHead === null || knownHead === head) return null;
+  try {
+    const commit = obj(await ghJson(gh, ["api", `repos/${repo}/commits/${head}`]));
+    return str(obj(commit.author).login) ?? str(obj(obj(commit.commit).author).name);
+  } catch {
+    // The author only labels the change in the summary.
+    return null;
+  }
+}
+
 /**
  * Reads the head, the pull request and everything reporting on the head commit.
  *
- * On a branch the runs are the branch's, not the head commit's: a head that
- * skipped CI would otherwise hide runs still going on the commits before it.
+ * A pull request that is closed or conflicting is returned before anything
+ * else is read: the wait ends on it, and a failing read further on must not
+ * turn that answer into an error. The pull request is read again at the end;
+ * if the head moved meanwhile, what was read belongs to the old head and is
+ * dropped, so the next read starts on the new one.
+ *
+ * On a branch the runs are the branch's newest hundred, not the head commit's:
+ * a head that skipped CI would otherwise hide runs still going on the commits
+ * before it. Paging through a branch's whole history is not worth it.
  */
 export async function readSnapshot(gh: GhRunner, target: Target, knownHead: string | null): Promise<Snapshot> {
+  const nothingRead = { runs: [], appChecks: [], statuses: [] };
   let head: string;
   let pullRequest: PullRequestState | null = null;
   let runs: WorkflowRun[];
 
   if ("pr" in target) {
-    const pr = obj(await ghJson(gh, ["pr", "view", String(target.pr), "--repo", target.repo, "--json", "state,mergeable,headRefOid"]));
-    head = str(pr.headRefOid) ?? "";
-    pullRequest = { state: str(pr.state) ?? "", mergeable: str(pr.mergeable) ?? "UNKNOWN" };
-    if (!head) throw new Error(`${describeTarget(target)} の head を読めませんでした`);
-    runs = parseRuns(await ghJson(gh, ["api", `repos/${target.repo}/actions/runs?head_sha=${head}&per_page=100`]));
+    const pr = await readPullRequest(gh, target);
+    head = pr.head;
+    pullRequest = pr.state;
+    if (pullRequest.state !== "OPEN" || pullRequest.mergeable === "CONFLICTING") {
+      return { head, headAuthor: await readAuthor(gh, target.repo, head, knownHead), pullRequest, ...nothingRead };
+    }
+    runs = parseRuns(await ghAllPages(gh, `repos/${target.repo}/actions/runs?head_sha=${head}&per_page=100`, "workflow_runs"));
   } else {
     const branch = encodeURIComponent(target.branch);
     head = str(obj(obj(await ghJson(gh, ["api", `repos/${target.repo}/branches/${branch}`])).commit).sha) ?? "";
@@ -448,21 +490,25 @@ export async function readSnapshot(gh: GhRunner, target: Target, knownHead: stri
   }
 
   const [checks, statuses] = await Promise.all([
-    ghJson(gh, ["api", `repos/${target.repo}/commits/${head}/check-runs?per_page=100`]),
-    ghJson(gh, ["api", `repos/${target.repo}/commits/${head}/status`]),
+    ghAllPages(gh, `repos/${target.repo}/commits/${head}/check-runs?per_page=100`, "check_runs"),
+    ghAllPages(gh, `repos/${target.repo}/commits/${head}/status?per_page=100`, "statuses"),
   ]);
 
-  let headAuthor: string | null = null;
-  if (knownHead !== null && knownHead !== head) {
-    try {
-      const commit = obj(await ghJson(gh, ["api", `repos/${target.repo}/commits/${head}`]));
-      headAuthor = str(obj(commit.author).login) ?? str(obj(obj(commit.commit).author).name);
-    } catch {
-      // The author only labels the change in the summary.
+  if ("pr" in target) {
+    const again = await readPullRequest(gh, target);
+    if (again.head !== head) {
+      return { head: again.head, headAuthor: await readAuthor(gh, target.repo, again.head, knownHead), pullRequest: again.state, ...nothingRead };
     }
   }
 
-  return { head, headAuthor, pullRequest, runs, appChecks: parseAppChecks(checks), statuses: parseStatuses(statuses) };
+  return {
+    head,
+    headAuthor: await readAuthor(gh, target.repo, head, knownHead),
+    pullRequest,
+    runs,
+    appChecks: parseAppChecks(checks),
+    statuses: parseStatuses(statuses),
+  };
 }
 
 // ─── The wait ───────────────────────────────────────────────────────
@@ -545,7 +591,7 @@ export async function readJobDetails(gh: GhRunner, repo: string, snapshot: Snaps
     const named = jobs.filter((job) => !PASSING.has(str(job.conclusion) ?? ""));
     // A run that failed before creating any job is reported at run level.
     if (named.length === 0) continue;
-    out.readRuns.push(run.name);
+    out.readRuns.push(run.id);
     for (const job of named) {
       const conclusion = str(job.conclusion) ?? "結論なし";
       const name = `${run.name} / ${str(job.name) ?? "名前なし"}`;
