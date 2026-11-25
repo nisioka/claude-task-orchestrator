@@ -165,6 +165,12 @@ npx tsx src/cli/personal-assignee.ts --id=<ISSUE-ID> --to=human
 npx tsx src/cli/send-reminder.ts "message"
 ```
 
+The CLI a child uses to wait for CI after a push lives there too. It prints nothing until CI is over, then one summary. How children use it is in [prompts/child/ci-wait.md](prompts/child/ci-wait.md).
+
+```bash
+npx tsx src/cli/ci-wait.ts --repo=<owner/name> --pr=<number>
+```
+
 ## Configuration
 
 | File | What it holds |

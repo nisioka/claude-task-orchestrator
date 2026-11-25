@@ -26,7 +26,7 @@
 3. `origin/main` を rebase で取り込み、競合を解消する。**どちらの変更も捨てないこと**
 4. force push（自分のブランチのみ）して、MERGEABLE / CLEAN とCIの結果を確認する
 
-試して捨てた方法は、その場で作業ログに書いてください（`worklog.md`）。
+試して捨てた方法は、その場で作業ログに書いてください（`worklog.md`）。CI は `ci-wait.md` のとおりに待ってください。
 
 ## Terraform / インフラ特有の注意
 
